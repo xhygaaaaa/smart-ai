@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from src.auth import require_login
 
 
 def init_session_state():
@@ -20,6 +21,9 @@ def main():
 
     st.title("📈 实时评测 - 准确率统计")
     st.markdown("实时展示用户提问的准确率变化趋势")
+
+    if not require_login():
+        return
 
     init_session_state()
 

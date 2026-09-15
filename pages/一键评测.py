@@ -7,6 +7,7 @@ from src.simple_rag import SimpleRAG
 from src.llm_client import LLMClient
 from src.evaluator import Evaluator
 import config
+from src.auth import require_login
 
 
 @st.cache_resource
@@ -109,6 +110,9 @@ def main():
 
     st.title("🎯 一键评测 - 批量测试42题")
     st.markdown("验证Prompt优化效果，快速跑完整个测试集")
+
+    if not require_login():
+        return
 
     init_evaluation_state()
 
@@ -233,7 +237,7 @@ def main():
             )
 
     elif not st.session_state.eval_results:
-        st.info("👆 点击"开始评测"按钮，批量跑42题测试集")
+        st.info("👆 点击「开始评测」按钮，批量跑42题测试集")
 
 
 if __name__ == "__main__":

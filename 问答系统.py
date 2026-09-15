@@ -1,14 +1,20 @@
-"""SmartGuide AI - 主页:问答系统"""
+"""SmartGuide AI - 智能硬件客服助手
+
+单页应用,顶部「用户端 / 服务端」左右切换:
+  - 用户端:聊天式问答(输入框在下方,问答气泡在上方)
+  - 服务端:管理后台(数据看板 + 知识库管理,需登录)
+"""
 import streamlit as st
-from src.simple_rag import SimpleRAG
+from src.simple_rag import SimpleRAG, DEVICE_KEYWORD_MAP
 from src.llm_client import LLMClient
 from src.evaluator import Evaluator
+from src.admin_panel import render_server
 import config
 
 
 @st.cache_resource
 def load_knowledge_base():
-    """加载知识库(只加载一次)"""
+    """加载知识库(只加载一次,避免每次刷新重复读文件)"""
     documents = {}
     for device_name, file_path in config.MANUALS.items():
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -16,158 +22,157 @@ def load_knowledge_base():
     return SimpleRAG(documents)
 
 
+@st.cache_resource
+def get_llm_client():
+    """复用 LLM 客户端(避免每次刷新重复初始化)"""
+    return LLMClient()
+
+
+def extract_device(question: str):
+    """从问题里识别设备名(用于多轮上下文记忆)。"""
+    for name in config.MANUALS:
+        if name in question:
+            return name
+    for kw, name in DEVICE_KEYWORD_MAP.items():
+        if kw in question:
+            return name
+    return None
+
+
 def init_session_state():
-    """初始化session_state"""
-    if 'current_result' not in st.session_state:
-        st.session_state.current_result = None
+    """初始化 session_state"""
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []          # 聊天记录 [{role, content, docs?}]
     if 'history' not in st.session_state:
-        st.session_state.history = []
+        st.session_state.history = []           # 指标记录(供服务端)
+    if 'context_device' not in st.session_state:
+        st.session_state.context_device = None  # 多轮上下文:当前设备
+    if 'pending_prompt' not in st.session_state:
+        st.session_state.pending_prompt = None  # 待处理的提问(两段式渲染)
+
+
+def compute_assistant(prompt, rag, llm_client, evaluator):
+    """计算回答并追加助手气泡 + 记录指标。"""
+    # 多轮上下文:记住用户当前在问哪个设备
+    device = extract_device(prompt)
+    if device:
+        st.session_state.context_device = device
+
+    # 问题没提设备时,沿用上一轮的设备(如"那怎么充电?")
+    effective = prompt
+    if not device and st.session_state.context_device:
+        effective = f"{st.session_state.context_device} {prompt}"
+
+    # 处理流程
+    if not evaluator.is_valid_question(effective):
+        answer = "⚠️ 问题无效：不符合客服场景（问题过短或没提到具体设备/动作）。"
+        docs, category, accuracy, detail = [], "无效", None, None
+    else:
+        docs = rag.retrieve(effective, top_k=config.TOP_K)
+        if not docs:
+            answer = "❌ 抱歉，知识库里没找到相关内容，请换个问法试试。"
+            category, accuracy, detail = "无效", None, None
+        else:
+            try:
+                answer = llm_client.answer_question(effective, docs)
+                category, _ = evaluator.classify_question(effective, answer)
+                accuracy, detail = (evaluator.calculate_accuracy_a(answer, docs)
+                                    if category == "有效" else (None, None))
+            except Exception as e:
+                answer = f"❌ 调用AI失败：{e}"
+                docs, category, accuracy, detail = [], "错误", None, None
+
+    # 记录指标(供服务端数据看板)
+    st.session_state.history.append({
+        "question": prompt,
+        "effective_question": effective,
+        "answer": answer,
+        "retrieved_docs": docs,
+        "category": category,
+        "accuracy": accuracy,
+        "detail": detail,
+        "context_device": st.session_state.context_device,
+    })
+
+    # 加入助手气泡
+    st.session_state.messages.append({'role': 'assistant', 'content': answer, 'docs': docs})
+
+
+def render_chat_client(rag, llm_client, evaluator):
+    """渲染用户端:聊天式问答界面。"""
+    # 多轮上下文提示
+    if st.session_state.context_device:
+        c1, c2 = st.columns([6, 1])
+        c1.caption(f"🧠 上下文记忆：正在聊 **{st.session_state.context_device}**，后续问题可省略设备名")
+        if c2.button("清除上下文", use_container_width=True):
+            st.session_state.context_device = None
+            st.rerun()
+
+    # 欢迎语(无历史时)
+    if not st.session_state.messages:
+        st.markdown("""
+        👋 你好，我是 **SmartGuide AI** 智能硬件客服助手。可以问我：
+
+        - 智能手环如何连接手机？
+        - 智能门锁能录入多少个指纹？
+        - 智能音箱怎么重置？
+        - 智能台灯支持哪些色温？
+
+        *(问过一次设备后，可以省略设备名接着追问)*
+        """)
+
+    # 历史消息(问答气泡在上方)
+    for msg in st.session_state.messages:
+        with st.chat_message(msg['role']):
+            st.markdown(msg['content'])
+            # 助手回答附资料出处(折叠,保持界面干净)
+            if msg['role'] == 'assistant' and msg.get('docs'):
+                with st.expander("📚 资料出处"):
+                    for i, (device, content, score) in enumerate(msg['docs'], 1):
+                        st.caption(f"[{i}] {device} · 相似度 {score:.3f}")
+                        st.text(content[:200] + ("..." if len(content) > 200 else ""))
+
+    # 底部输入框
+    prompt = st.chat_input("请输入您的问题，例如：智能手环如何连接手机？")
+    if prompt:
+        # 先显示用户气泡,再计算回答(两段式渲染,像真实聊天)
+        st.session_state.messages.append({'role': 'user', 'content': prompt})
+        st.session_state.pending_prompt = prompt
+        st.rerun()
+
+    if st.session_state.pending_prompt:
+        pending = st.session_state.pending_prompt
+        st.session_state.pending_prompt = None
+        with st.spinner("🤔 AI思考中..."):
+            compute_assistant(pending, rag, llm_client, evaluator)
+        st.rerun()
 
 
 def main():
-    st.set_page_config(
-        page_title="SmartGuide AI",
-        page_icon="🤖",
-        layout="wide"
-    )
+    st.set_page_config(page_title="SmartGuide AI", page_icon="🤖", layout="wide")
 
     st.title("🤖 SmartGuide AI - 智能硬件客服助手")
-    st.markdown("""
-    支持的设备: **智能手环** | **智能手表** | **智能音箱** | **智能台灯** | **智能门锁**
+    st.caption("支持的设备：智能手环 · 智能手表 · 智能音箱 · 智能台灯 · 智能门锁")
 
-    ---
-    """)
-
-    # 初始化
     init_session_state()
     rag = load_knowledge_base()
-    llm_client = LLMClient()
+    llm_client = get_llm_client()
     evaluator = Evaluator()
 
-    # 输入区
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        question = st.text_input(
-            "请输入您的问题:",
-            placeholder="例如: 智能手环如何连接手机?",
-            key="question_input"
-        )
-    with col2:
-        st.write("")  # 占位对齐
-        submit = st.button("🔍 提问", type="primary", use_container_width=True)
+    # 顶部「用户端 / 服务端」左右切换
+    view = st.segmented_control(
+        "视图切换",
+        ["🤖 用户端", "🛠️ 服务端"],
+        default="🤖 用户端",
+        label_visibility="collapsed",
+    )
 
-    # 处理提问
-    if submit and question:
-        # 第一级过滤:无效问题
-        if not evaluator.is_valid_question(question):
-            st.warning("⚠️ 问题无效:不符合客服场景(问题过短或不包含设备关键词)")
-            st.session_state.current_result = None
-        else:
-            with st.spinner("🔍 检索知识库..."):
-                retrieved_docs = rag.retrieve(question, top_k=config.TOP_K)
+    st.divider()
 
-            if not retrieved_docs:
-                st.warning("❌ 未找到相关内容")
-                st.session_state.current_result = None
-            else:
-                with st.spinner("🤔 AI思考中..."):
-                    try:
-                        answer = llm_client.answer_question(question, retrieved_docs)
-
-                        # 分类和评分
-                        category, category_note = evaluator.classify_question(question, answer)
-
-                        # 只对"有效"问题计算准确率
-                        if category == "有效":
-                            accuracy, detail = evaluator.calculate_accuracy_a(answer, retrieved_docs)
-                        else:
-                            accuracy, detail = None, None
-
-                        # 存储结果到session_state(解决截图后答案消失的bug)
-                        st.session_state.current_result = {
-                            "question": question,
-                            "answer": answer,
-                            "retrieved_docs": retrieved_docs,
-                            "category": category,
-                            "category_note": category_note,
-                            "accuracy": accuracy,
-                            "detail": detail
-                        }
-
-                        # 记录历史
-                        st.session_state.history.append(st.session_state.current_result)
-
-                    except Exception as e:
-                        st.error(f"❌ 调用AI失败: {str(e)}")
-                        st.session_state.current_result = None
-
-    # 显示结果(从session_state读取,避免rerun后丢失)
-    if st.session_state.current_result:
-        result = st.session_state.current_result
-
-        st.success("✅ 回答生成完毕")
-
-        # 显示答案
-        st.markdown("### 💬 AI回答")
-        st.info(result["answer"])
-
-        # 显示分类和准确率
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            category_color = {
-                "有效": "🟢",
-                "超纲": "🟡",
-                "无效": "🔴"
-            }
-            st.metric("问题分类", f"{category_color[result['category']]} {result['category']}")
-        with col2:
-            if result["accuracy"] is not None:
-                st.metric("方案A准确率", f"{result['accuracy']:.1%}")
-            else:
-                st.metric("方案A准确率", "不适用")
-        with col3:
-            st.metric("引用文档数", len(result["retrieved_docs"]))
-
-        # 显示分类说明
-        st.caption(f"📝 {result['category_note']}")
-
-        # 显示检索的文档
-        with st.expander("📚 查看引用文档"):
-            for i, (device, content, score) in enumerate(result["retrieved_docs"], 1):
-                st.markdown(f"**[文档{i}] {device}** (相似度: {score:.3f})")
-                st.text(content[:200] + "..." if len(content) > 200 else content)
-                st.divider()
-
-        # 显示关键词分析(仅有效问题)
-        if result["detail"]:
-            with st.expander("🔍 关键词匹配详情"):
-                detail = result["detail"]
-                st.write(f"- 答案关键词总数: {detail['total_keywords']}")
-                st.write(f"- 有文档支持的: {detail['supported_keywords']}")
-                st.write(f"- 无文档支持的: {len(detail['unsupported_keywords'])}")
-                if detail['unsupported_keywords']:
-                    st.warning(f"缺乏依据的词: {', '.join(detail['unsupported_keywords'][:10])}")
-
-    # 侧边栏
-    with st.sidebar:
-        st.header("📊 功能导航")
-        st.page_link("问答系统.py", label="🏠 问答系统", icon="🏠")
-        st.page_link("pages/实时评测.py", label="📈 实时评测", icon="📈")
-        st.page_link("pages/一键评测.py", label="🎯 一键评测", icon="🎯")
-
-        st.divider()
-
-        st.header("ℹ️ 系统信息")
-        st.info(f"""
-        - **模型**: {config.LLM_MODEL}
-        - **检索TOP_K**: {config.TOP_K}
-        - **准确率算法**: 方案A(防幻觉检测)
-        """)
-
-        if st.session_state.history:
-            st.divider()
-            st.header("📜 本次会话历史")
-            st.caption(f"共 {len(st.session_state.history)} 条提问")
+    if view == "🛠️ 服务端":
+        render_server()
+    else:
+        render_chat_client(rag, llm_client, evaluator)
 
 
 if __name__ == "__main__":
