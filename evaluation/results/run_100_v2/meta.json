@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-10-26T17:38:32",
+  "model": "deepseek-chat",
+  "temperature": 0.3,
+  "retriever": "bm25",
+  "top_k": 5,
+  "judge": "keyword",
+  "n": 100,
+  "sleep": 0.3,
+  "run_id": "run_100_v2"
+}

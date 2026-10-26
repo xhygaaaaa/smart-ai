@@ -29,6 +29,23 @@ LLM_TEMPERATURE = float(_get("LLM_TEMPERATURE", "0.3"))
 # RAG配置
 TOP_K = int(_get("TOP_K", "5"))
 
+# 检索后端：bigram(原实现) / bm25 / hybrid(BM25+向量, 需额外依赖)
+# 默认 bm25：无需额外依赖，长文档场景明显优于字面 bigram。
+RETRIEVER = _get("RETRIEVER", "bm25").strip().lower()
+
+# 向量检索 / 重排（可选，依赖 sentence-transformers；未安装时自动降级）
+EMBEDDING_MODEL = _get("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
+RERANK = _get("RERANK", "false").strip().lower() in ("1", "true", "yes", "on")
+RERANK_MODEL = _get("RERANK_MODEL", "BAAI/bge-reranker-base")
+HYBRID_ALPHA = float(_get("HYBRID_ALPHA", "0.5"))  # 0=纯BM25, 1=纯向量
+
+# 多轮对话：把最近 N 轮问答放进 prompt（0 表示关闭）
+HISTORY_TURNS = int(_get("HISTORY_TURNS", "3"))
+
+# 埋点 / 自助解决率
+TELEMETRY_DB = os.path.join(os.path.dirname(__file__), "data", "telemetry.db")
+FOLLOWUP_WINDOW_MINUTES = int(_get("FOLLOWUP_WINDOW_MINUTES", "10"))
+
 # 管理端密码(服务端页面登录用,可在 .env / secrets.toml 中覆盖)
 ADMIN_PASSWORD = _get("ADMIN_PASSWORD", "admin")
 
@@ -44,6 +61,7 @@ MANUALS = {
 
 # 评测配置
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "evaluation", "test_set.csv")
+EVAL_RESULT_DIR = os.path.join(os.path.dirname(__file__), "evaluation", "results")
 
 # 拒答信号词(用于识别超纲问题)
 # 注意：只保留"完整拒答短语"，不能放"无法/不能/不在"这类单字词——

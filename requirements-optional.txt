@@ -1,0 +1,3 @@
+# 可选：启用 hybrid 向量检索 / CrossEncoder 重排时安装
+# 首次运行会自动下载模型（约 100MB）
+sentence-transformers>=2.7.0

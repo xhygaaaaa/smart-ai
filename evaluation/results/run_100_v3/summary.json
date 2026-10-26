@@ -1,0 +1,15 @@
+{
+  "total": 100,
+  "valid": 90,
+  "out_of_scope": 10,
+  "invalid_or_error": 0,
+  "errors": 0,
+  "groundedness_avg": 0.6074,
+  "groundedness_n": 90,
+  "correctness_recall_avg": 0.7113,
+  "correctness_n": 90,
+  "correct_rate": 0.7556,
+  "refusal_rate": 1.0,
+  "task_success_rate": 0.78,
+  "task_success_n": 100
+}

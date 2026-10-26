@@ -19,8 +19,8 @@ def main():
         layout="wide"
     )
 
-    st.title("📈 实时评测 - 准确率统计")
-    st.markdown("实时展示用户提问的准确率变化趋势")
+    st.title("📈 实时评测 - 有据可查率统计")
+    st.markdown("实时展示用户提问的有据可查率（groundedness）变化趋势")
 
     if not require_login():
         return
@@ -31,14 +31,14 @@ def main():
         st.warning("⚠️ 暂无提问记录，请先在主页进行提问")
         return
 
-    # 筛选有效问题(只统计有效问题的准确率)
+    # 筛选有效问题(只统计有效问题的有据可查率)
     valid_records = [
         r for r in st.session_state.history
         if r.get("category") == "有效" and r.get("accuracy") is not None
     ]
 
     if not valid_records:
-        st.info("📊 当前所有问题均为超纲或无效，无准确率数据")
+        st.info("📊 当前所有问题均为超纲或无效，无有据可查率数据")
 
         # 显示分类统计
         categories = [r.get("category", "未知") for r in st.session_state.history]
@@ -65,19 +65,19 @@ def main():
     with col1:
         st.metric("有效问题数", len(valid_records))
     with col2:
-        st.metric("平均准确率", f"{avg_accuracy:.1%}")
+        st.metric("平均有据可查率", f"{avg_accuracy:.1%}")
     with col3:
-        st.metric("最高准确率", f"{max(accuracies):.1%}")
+        st.metric("最高有据可查率", f"{max(accuracies):.1%}")
     with col4:
-        st.metric("最低准确率", f"{min(accuracies):.1%}")
+        st.metric("最低有据可查率", f"{min(accuracies):.1%}")
 
     # 可视化
-    st.markdown("### 📉 准确率变化趋势")
+    st.markdown("### 📉 有据可查率变化趋势")
 
     # 创建子图(柱状图+折线图)
     fig = make_subplots(
         rows=2, cols=1,
-        subplot_titles=("每次提问准确率 (柱状图)", "准确率趋势 (折线图)"),
+        subplot_titles=("每次提问有据可查率 (柱状图)", "有据可查率趋势 (折线图)"),
         vertical_spacing=0.15,
         row_heights=[0.5, 0.5]
     )
@@ -93,8 +93,8 @@ def main():
             marker_color=colors,
             text=[f"{acc:.1%}" for acc in accuracies],
             textposition='outside',
-            name="准确率",
-            hovertemplate="<b>第%{x}次提问</b><br>准确率: %{y:.1%}<extra></extra>"
+            name="有据可查率",
+            hovertemplate="<b>第%{x}次提问</b><br>有据可查率: %{y:.1%}<extra></extra>"
         ),
         row=1, col=1
     )
@@ -105,10 +105,10 @@ def main():
             x=list(range(1, len(accuracies) + 1)),
             y=accuracies,
             mode='lines+markers',
-            name="准确率",
+            name="有据可查率",
             line=dict(color='#1f77b4', width=2),
             marker=dict(size=8),
-            hovertemplate="<b>第%{x}次</b><br>准确率: %{y:.1%}<extra></extra>"
+            hovertemplate="<b>第%{x}次</b><br>有据可查率: %{y:.1%}<extra></extra>"
         ),
         row=2, col=1
     )
@@ -125,8 +125,8 @@ def main():
 
     fig.update_xaxes(title_text="提问序号", row=1, col=1)
     fig.update_xaxes(title_text="提问序号", row=2, col=1)
-    fig.update_yaxes(title_text="准确率", range=[0, 1.05], row=1, col=1)
-    fig.update_yaxes(title_text="准确率", range=[0, 1.05], row=2, col=1)
+    fig.update_yaxes(title_text="有据可查率", range=[0, 1.05], row=1, col=1)
+    fig.update_yaxes(title_text="有据可查率", range=[0, 1.05], row=2, col=1)
 
     fig.update_layout(height=800, showlegend=False)
 
@@ -137,7 +137,7 @@ def main():
     df = pd.DataFrame({
         "序号": range(1, len(valid_records) + 1),
         "问题": questions,
-        "准确率": [f"{acc:.1%}" for acc in accuracies],
+        "有据可查率": [f"{acc:.1%}" for acc in accuracies],
         "分类": ["有效"] * len(valid_records)
     })
 
@@ -152,7 +152,7 @@ def main():
         for cat, count in category_counts.items():
             st.write(f"- {cat}: {count} 条")
 
-        st.caption("📝 说明: 只有'有效'分类的问题才会计入准确率统计")
+        st.caption("📝 说明: 只有'有效'分类的问题才会计入有据可查率统计")
 
 
 if __name__ == "__main__":

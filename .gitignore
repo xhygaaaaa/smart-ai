@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .env
 .streamlit/credentials.toml
+
+# 运行时数据（埋点库含真实提问，不入库）
+data/*.db
+*.db-journal

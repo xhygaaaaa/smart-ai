@@ -48,21 +48,24 @@ def metrics_dashboard():
         c1.metric("总提问", len(history))
         c2.metric("有效问题", len(valid))
         c3.metric("超纲问题", len([r for r in history if r.get("category") == "超纲"]))
-        c4.metric("平均准确率(方案A)", f"{sum(accs)/len(accs):.1%}" if accs else "无")
+        c4.metric("平均有据可查率", f"{sum(accs)/len(accs):.1%}" if accs else "无")
 
         st.markdown("**提问明细**")
         df = pd.DataFrame({
             "问题": [r["question"] for r in history],
             "分类": [r.get("category", "") for r in history],
-            "方案A准确率": [f"{r['accuracy']:.1%}" if r.get("accuracy") is not None else "-"
-                           for r in history],
+            "有据可查率(groundedness)": [
+                f"{r['accuracy']:.1%}" if r.get("accuracy") is not None else "-"
+                for r in history
+            ],
             "引用文档数": [len(r.get("retrieved_docs", [])) for r in history],
         })
         st.dataframe(df, use_container_width=True, hide_index=True)
 
     st.markdown("**完整评测工具**")
-    st.page_link("pages/实时评测.py", label="📈 实时评测(准确率趋势图)", icon="📈")
-    st.page_link("pages/一键评测.py", label="🎯 一键评测(42题批量回归)", icon="🎯")
+    st.page_link("pages/自助解决率.py", label="🎯 自助解决率看板", icon="🎯")
+    st.page_link("pages/实时评测.py", label="📈 实时评测(有据可查率趋势)", icon="📈")
+    st.page_link("pages/一键评测.py", label="🧪 一键评测(100题批量回归)", icon="🧪")
 
 
 def knowledge_management():

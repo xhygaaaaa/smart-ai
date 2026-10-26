@@ -1,0 +1,61 @@
+模型=deepseek-chat 检索=bm25 题数=41 judge=keyword
+[ 1/41] 有效 grounded=0.66 correct=False :: 如何将智能手环连接到手机?
+[ 2/41] 有效 grounded=0.67 correct=True :: 智能手表如何开机?
+[ 3/41] 有效 grounded=0.9 correct=True :: 智能音箱怎么配网?
+[ 4/41] 有效 grounded=0.65 correct=False :: 智能台灯如何连接WiFi?
+[ 5/41] 有效 grounded=0.83 correct=True :: 智能门锁如何绑定App?
+[ 6/41] 有效 grounded=0.48 correct=True :: 智能手环如何开启运动模式?
+[ 7/41] 有效 grounded=0.88 correct=True :: 智能手表如何更换表盘?
+[ 8/41] 有效 grounded=0.54 correct=False :: 智能音箱如何播放音乐?
+[ 9/41] 有效 grounded=0.61 correct=True :: 智能台灯如何调节亮度?
+[10/41] 有效 grounded=0.73 correct=False :: 智能门锁如何录入指纹?
+[11/41] 有效 grounded=0.8 correct=False :: 智能手环如何查看睡眠数据?
+[12/41] 有效 grounded=0.75 correct=True :: 智能手表如何接听电话?
+[13/41] 有效 grounded=0.79 correct=False :: 智能音箱如何控制智能家居?
+[14/41] 有效 grounded=0.31 correct=False :: 智能台灯如何设置定时关灯?
+[15/41] 有效 grounded=0.78 correct=False :: 智能门锁如何生成临时密码?
+[16/41] 有效 grounded=1.0 correct=True :: 智能手环的防水等级是多少?
+[17/41] 有效 grounded=0.88 correct=True :: 智能手表的电池续航是多少天?
+[18/41] 有效 grounded=0.67 correct=True :: 智能音箱支持多远距离语音?
+[19/41] 有效 grounded=0.38 correct=True :: 智能台灯的色温范围是多少?
+[20/41] 有效 grounded=0.2 correct=True :: 智能门锁可以录入多少个指纹?
+[21/41] 有效 grounded=0.5 correct=False :: 智能手环无法充电怎么办?
+[22/41] 有效 grounded=0.62 correct=True :: 智能手表连接断开怎么办?
+[23/41] 有效 grounded=0.81 correct=True :: 智能音箱无法联网怎么办?
+[24/41] 有效 grounded=0.69 correct=True :: 智能台灯闪烁怎么办?
+[25/41] 有效 grounded=0.75 correct=True :: 智能门锁指纹识别失败怎么办?
+[26/41] 有效 grounded=0.56 correct=False :: 智能手环数据不同步怎么办?
+[27/41] 有效 grounded=0.54 correct=True :: 智能手表GPS定位慢怎么办?
+[28/41] 有效 grounded=0.44 correct=False :: 智能音箱无法识别语音怎么办?
+[29/41] 有效 grounded=0.81 correct=True :: 智能台灯App显示离线怎么办?
+[30/41] 有效 grounded=0.6 correct=True :: 智能门锁电池耗尽无法开门怎么办?
+[31/41] 有效 grounded=0.73 correct=True :: 智能手环续航时间变短怎么办?
+[32/41] 有效 grounded=0.72 correct=True :: 智能手表如何优化续航?
+[33/41] 有效 grounded=0.63 correct=False :: 智能音箱如何调节音质?
+[34/41] 有效 grounded=0.46 correct=True :: 智能台灯建议的阅读亮度是多少?
+[35/41] 有效 grounded=0.4 correct=True :: 智能门锁机械钥匙开锁方法是什么?
+[36/41] 超纲 grounded=None correct=True :: 智能手环的价格是多少?
+[37/41] 超纲 grounded=None correct=True :: 智能手表和智能手环哪个好?
+[38/41] 超纲 grounded=None correct=True :: 智能音箱在哪里购买?
+[39/41] 超纲 grounded=None correct=True :: 智能台灯保修几年?
+[40/41] 超纲 grounded=None correct=True :: 智能门锁保修期多久?
+[41/41] 超纲 grounded=None correct=True :: 智能设备怎么维修?
+
+===== 汇总 =====
+{
+  "total": 41,
+  "valid": 35,
+  "out_of_scope": 6,
+  "invalid_or_error": 0,
+  "errors": 0,
+  "groundedness_avg": 0.651,
+  "groundedness_n": 35,
+  "correctness_recall_avg": 0.6288,
+  "correctness_n": 35,
+  "correct_rate": 0.6571,
+  "refusal_rate": 1.0,
+  "task_success_rate": 0.7073,
+  "task_success_n": 41
+}
+
+结果已写入: D:\学习\AGENT\smartguide-ai\evaluation\results\run_20261026_143313

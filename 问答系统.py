@@ -4,11 +4,16 @@
   - 用户端:聊天式问答(输入框在下方,问答气泡在上方)
   - 服务端:管理后台(数据看板 + 知识库管理,需登录)
 """
+import time
+import uuid
+
 import streamlit as st
-from src.simple_rag import SimpleRAG, DEVICE_KEYWORD_MAP
+from src.simple_rag import DEVICE_KEYWORD_MAP
+from src.retrieval import build_retriever
 from src.llm_client import LLMClient
 from src.evaluator import Evaluator
 from src.admin_panel import render_server
+from src import telemetry
 import config
 
 
@@ -19,7 +24,7 @@ def load_knowledge_base():
     for device_name, file_path in config.MANUALS.items():
         with open(file_path, 'r', encoding='utf-8') as f:
             documents[device_name] = f.read()
-    return SimpleRAG(documents)
+    return build_retriever(documents)
 
 
 @st.cache_resource
@@ -49,10 +54,27 @@ def init_session_state():
         st.session_state.context_device = None  # 多轮上下文:当前设备
     if 'pending_prompt' not in st.session_state:
         st.session_state.pending_prompt = None  # 待处理的提问(两段式渲染)
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = uuid.uuid4().hex
+
+
+def build_history():
+    """取当前提问之前的历史对话（不含刚追加的这条用户消息）。
+
+    只保留 role/content，参考文档不进入下文，避免历史文档挤占窗口。
+    """
+    msgs = st.session_state.messages
+    # 最后一条是本轮用户提问
+    prior = msgs[:-1] if msgs and msgs[-1].get('role') == 'user' else msgs
+    return [{'role': m['role'], 'content': m['content']}
+            for m in prior if m.get('role') in ('user', 'assistant') and m.get('content')]
 
 
 def compute_assistant(prompt, rag, llm_client, evaluator):
     """计算回答并追加助手气泡 + 记录指标。"""
+    started = time.time()
+    history = build_history()
+
     # 多轮上下文:记住用户当前在问哪个设备
     device = extract_device(prompt)
     if device:
@@ -77,7 +99,10 @@ def compute_assistant(prompt, rag, llm_client, evaluator):
             category, accuracy, detail = "超纲", None, None
         else:
             try:
-                answer = llm_client.answer_question(effective, docs)
+                answer = llm_client.answer_question(
+                    effective, docs, history=history,
+                    max_turns=config.HISTORY_TURNS,
+                )
                 category, _ = evaluator.classify_question(effective, answer)
                 accuracy, detail = (evaluator.calculate_accuracy_a(answer, docs)
                                     if category == "有效" else (None, None))
@@ -85,8 +110,10 @@ def compute_assistant(prompt, rag, llm_client, evaluator):
                 answer = f"❌ 调用AI失败：{e}"
                 docs, category, accuracy, detail = [], "错误", None, None
 
+    latency_ms = int((time.time() - started) * 1000)
+
     # 记录指标(供服务端数据看板)
-    st.session_state.history.append({
+    record = {
         "question": prompt,
         "effective_question": effective,
         "answer": answer,
@@ -95,21 +122,58 @@ def compute_assistant(prompt, rag, llm_client, evaluator):
         "accuracy": accuracy,
         "detail": detail,
         "context_device": st.session_state.context_device,
-    })
+        "history_turns": len(history) // 2,
+        "latency_ms": latency_ms,
+    }
+    st.session_state.history.append(record)
+
+    # 持久化埋点（自助解决率看板的数据源）
+    event_id = None
+    try:
+        event_id = telemetry.log_query(
+            session_id=st.session_state.session_id,
+            question=prompt,
+            effective_question=effective,
+            answer=answer,
+            category=category,
+            groundedness=accuracy,
+            retrieved_count=len(docs),
+            latency_ms=latency_ms,
+            device=st.session_state.context_device,
+            retriever=config.RETRIEVER,
+        )
+    except Exception as e:  # 埋点失败不能影响问答主流程
+        st.session_state.last_telemetry_error = str(e)
 
     # 加入助手气泡
-    st.session_state.messages.append({'role': 'assistant', 'content': answer, 'docs': docs})
+    st.session_state.messages.append({
+        'role': 'assistant',
+        'content': answer,
+        'docs': docs,
+        'event_id': event_id,
+        'feedback': None,
+    })
 
 
 def render_chat_client(rag, llm_client, evaluator):
     """渲染用户端:聊天式问答界面。"""
-    # 多轮上下文提示
-    if st.session_state.context_device:
-        c1, c2 = st.columns([6, 1])
-        c1.caption(f"🧠 上下文记忆：正在聊 **{st.session_state.context_device}**，后续问题可省略设备名")
-        if c2.button("清除上下文", use_container_width=True):
-            st.session_state.context_device = None
-            st.rerun()
+    # 顶部：当前上下文 + 新对话（清空聊天记录、上下文和会话 ID）
+    c1, c2 = st.columns([6, 1])
+    with c1:
+        if st.session_state.context_device:
+            st.caption(f"🧠 上下文记忆：正在聊 **{st.session_state.context_device}**，"
+                       "后续问题可省略设备名")
+        elif st.session_state.messages:
+            st.caption("💬 当前对话进行中")
+        else:
+            st.caption("💬 新对话")
+    if c2.button("🆕 新对话", use_container_width=True,
+                 help="清空聊天记录和多轮上下文，重新开始一段对话"):
+        st.session_state.messages = []
+        st.session_state.context_device = None
+        st.session_state.pending_prompt = None
+        st.session_state.session_id = uuid.uuid4().hex
+        st.rerun()
 
     # 欢迎语(无历史时)
     if not st.session_state.messages:
@@ -134,6 +198,24 @@ def render_chat_client(rag, llm_client, evaluator):
                     for i, (device, content, score) in enumerate(msg['docs'], 1):
                         st.caption(f"[{i}] {device} · 相似度 {score:.3f}")
                         st.text(content[:200] + ("..." if len(content) > 200 else ""))
+
+            # 解决情况反馈：自助解决率的数据来源之一
+            if msg['role'] == 'assistant' and msg.get('event_id'):
+                if msg.get('feedback') is None:
+                    c1, c2, c3 = st.columns([1, 1, 5])
+                    if c1.button("👍 已解决", key=f"ok_{msg['event_id']}",
+                                 use_container_width=True):
+                        telemetry.log_feedback(msg['event_id'], True, "helpful")
+                        msg['feedback'] = True
+                        st.rerun()
+                    if c2.button("👎 未解决", key=f"no_{msg['event_id']}",
+                                 use_container_width=True):
+                        telemetry.log_feedback(msg['event_id'], False, "unhelpful")
+                        msg['feedback'] = False
+                        st.rerun()
+                else:
+                    st.caption("✅ 已记录：已解决" if msg['feedback']
+                               else "📝 已记录：未解决，建议转人工")
 
     # 底部输入框
     prompt = st.chat_input("请输入您的问题，例如：智能手环如何连接手机？")
