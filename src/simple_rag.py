@@ -59,6 +59,16 @@ class SimpleRAG:
         "连手机": "连接手机 配对 蓝牙",
         "连不上": "连接 配对 蓝牙",
         "怎么连": "怎么连接 怎么配对 蓝牙",
+        # 用户口语“充不进电/充不上电”与手册里的“无法开机/连接充电器”字面不重合，
+        # 不做同义扩展会把正确的故障排查段落漏掉（实测 top-10 都进不去）。
+        "充不进电": "无法充电 充电故障 充电触点 充电器",
+        "充不进": "无法充电 充电故障 充电触点",
+        "充不上电": "无法充电 充电故障 充电触点 充电器",
+        "无法充电": "充电故障 充电触点 充电器",
+        "不充电": "无法充电 充电故障 充电触点",
+        "怎么充电": "充电方法 连接充电器 充电触点 充电时间",
+        "如何充电": "充电方法 连接充电器 充电触点 充电时间",
+        "充电": "充电器 充电触点 充电时间",
     }
 
     def _expand_query(self, query: str) -> str:
@@ -80,14 +90,19 @@ class SimpleRAG:
         Returns:
             [(设备名称, 段落内容, 相似度得分), ...]
         """
-        query_bigrams = self._extract_bigrams(self._expand_query(query))
-
         # 设备定向：问题里出现设备关键词时，只检索该设备的手册，避免跨设备噪音
         target_device = None
+        device_word = None
         for kw, name in DEVICE_KEYWORD_MAP.items():
             if kw in query:
                 target_device = name
+                device_word = kw
                 break
+
+        # 已经按设备过滤过了，“智能/手环”这些词对区分段落没有信息量，
+        # 留在查询里只会让“产品概述”这种泛泛的段落拿高分。
+        term_query = query.replace(device_word, "") if device_word else query
+        query_bigrams = self._extract_bigrams(self._expand_query(term_query))
 
         results = []
         for device_name, chunks in self.doc_chunks.items():
@@ -95,14 +110,31 @@ class SimpleRAG:
                 continue
             for chunk in chunks:
                 chunk_bigrams = self._extract_bigrams(chunk)
-                # 用 overlap 系数(交集/较短集合)替代 Jaccard，避免长段落被过度惩罚
-                if len(query_bigrams) > 0:
-                    intersection = len(query_bigrams & chunk_bigrams)
-                    denom = min(len(query_bigrams), len(chunk_bigrams))
-                    score = intersection / denom if denom > 0 else 0
+                if not query_bigrams:
+                    continue
+                intersection = len(query_bigrams & chunk_bigrams)
+                if intersection == 0:
+                    continue
 
-                    if score > 0:
-                        results.append((device_name, chunk, score))
+                # 原来的分母用 min(查询, 段落)，等于奖励“短段落”：
+                # “产品概述”这种只有两三行的块几乎稳拿第一，把真正的
+                # “技术规格/电池续航”挤下去。改成以“查询覆盖率”为主：
+                #   覆盖率 = 命中的查询词 / 查询总词数
+                #   精确率 = 命中的查询词 / 段落词数（权重低，避免长段落吃亏）
+                coverage = intersection / len(query_bigrams)
+                precision = intersection / max(1, len(chunk_bigrams))
+
+                # 小节标题命中额外加分（“电池续航是多少天”应优先落在“续航时间”段）
+                heading = chunk.split("\n", 1)[0]
+                heading_bigrams = self._extract_bigrams(heading)
+                heading_hit = (
+                    len(query_bigrams & heading_bigrams) / len(query_bigrams)
+                    if heading_bigrams else 0
+                )
+
+                score = 0.55 * coverage + 0.20 * precision + 0.25 * heading_hit
+                if score > 0:
+                    results.append((device_name, chunk, score))
 
         # 按得分降序排序，取前top_k
         results.sort(key=lambda x: x[2], reverse=True)

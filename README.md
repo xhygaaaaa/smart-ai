@@ -40,7 +40,7 @@
 - **统计面板** - 平均准确率、最高/最低值、问题分类占比
 
 ### ⚡ 一键批量评测
-- 自动运行完整 42 题测试集
+- 自动运行完整 41 题测试集
 - 涵盖 5 大类别：连接(connectivity) / 功能(functionality) / 规格(specification) / 故障(troubleshooting) / 超纲(out_of_scope)
 - 导出 CSV 格式评测报告
 - 验证 Prompt 优化效果
@@ -120,7 +120,7 @@ LLM_BASE_URL=https://api.minimax.chat/v1
 LLM_API_KEY=你的-minimax-api-key
 LLM_MODEL=abab6.5-chat
 LLM_TEMPERATURE=0.3
-TOP_K=3
+TOP_K=5
 ```
 
 **API 申请地址：**
@@ -139,7 +139,7 @@ LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_API_KEY=你的-通义-api-key
 LLM_MODEL=qwen-turbo
 LLM_TEMPERATURE=0.3
-TOP_K=3
+TOP_K=5
 ```
 </details>
 
@@ -151,7 +151,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=你的-deepseek-api-key
 LLM_MODEL=deepseek-chat
 LLM_TEMPERATURE=0.3
-TOP_K=3
+TOP_K=5
 ```
 </details>
 
@@ -163,7 +163,7 @@ LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 LLM_API_KEY=你的-智谱-api-key
 LLM_MODEL=glm-4
 LLM_TEMPERATURE=0.3
-TOP_K=3
+TOP_K=5
 ```
 </details>
 
@@ -192,7 +192,7 @@ smartguide-ai/
 │
 ├── pages/                         # 📄 多页面应用
 │   ├── 实时评测.py                # 📊 实时准确率统计与可视化
-│   └── 一键评测.py                # 🎯 批量运行42题测试集
+│   └── 一键评测.py                # 🎯 批量运行41题测试集
 │
 ├── src/                           # 🧩 核心业务模块
 │   ├── __init__.py
@@ -208,7 +208,7 @@ smartguide-ai/
 │   └── smart_lock_manual.txt      # 智能门锁使用指南
 │
 ├── evaluation/                    # 🧪 测试集
-│   └── test_set.csv               # 42题标准测试集（5大类别）
+│   └── test_set.csv               # 41题标准测试集（5大类别）
 │
 ├── .streamlit/                    # ⚙️ Streamlit配置
 │   └── config.toml                # 隐藏开发者菜单等配置
@@ -238,9 +238,9 @@ smartguide-ai/
 | 连接 | connectivity | 5 | 配对、开机、配网等基础连接问题 |
 | 功能 | functionality | 12 | 运动模式、表盘、音乐、调光等功能使用 |
 | 规格 | specification | 6 | 防水等级、续航、色温范围等参数查询 |
-| 故障 | troubleshooting | 13 | 无法充电、连接断开、闪烁等故障排查 |
+| 故障 | troubleshooting | 12 | 无法充电、连接断开、闪烁等故障排查 |
 | 超纲 | out_of_scope | 6 | 价格、保修、购买等知识库外问题 |
-| **总计** | | **42** | 覆盖客服场景主要问题类型 |
+| **总计** | | **41** | 覆盖客服场景主要问题类型 |
 
 ## 📖 使用指南
 
@@ -314,13 +314,13 @@ smartguide-ai/
 
 **功能：**
 1. 点击 ▶️ **开始评测** 按钮
-2. 系统自动逐题运行 42 道测试题
+2. 系统自动逐题运行 41 道测试题
 3. 显示实时进度条和当前题号
 4. 完成后展示完整报告
 
 **评测报告内容：**
 1. **总体指标**
-   - 总问题数: 42
+   - 总问题数: 41
    - 有效问题数: 通常 30-36 题
    - 平均准确率: 整体表现
    - 错误数: API 调用失败的题目
@@ -554,7 +554,7 @@ def _call_api_with_retry(self, messages: list, max_retries: int = 3) -> str:
 - 第 3 次失败: 等待 9 秒
 - 仍失败: 抛出异常
 
-**效果**: 一键评测 42 题时，即使 API 限流也能自动恢复，无需人工干预。
+**效果**: 一键评测 41 题时，即使 API 限流也能自动恢复，无需人工干预。
 
 ---
 
@@ -831,7 +831,7 @@ TOP_K=5  # 原来是 3，改为 5
 <details>
 <summary><b>Q: 一键评测需要多久？</b></summary>
 
-**时间估算**: 3-5 分钟（42 题）
+**时间估算**: 3-5 分钟（41 题）
 
 **影响因素**:
 - API 响应速度（通常 2-5秒/题）
@@ -1026,7 +1026,7 @@ engine.runAndWait()
 - RAM: 16GB
 - 网络: 100Mbps 家庭宽带
 - LLM: MiniMax abab6.5-chat
-- 测试集: 42题标准集
+- 测试集: 41题标准集
 
 ### 性能指标
 
@@ -1041,21 +1041,21 @@ engine.runAndWait()
 
 ### 准确率表现
 
-基于 42 题测试集的统计（2024年实测）:
+基于 41 题测试集的统计（2024年实测）:
 
 | 分类 | 题目数 | 平均准确率 |
 |------|--------|-----------|
 | connectivity | 5 | 78.3% |
 | functionality | 12 | 72.1% |
 | specification | 6 | 85.7% |
-| troubleshooting | 13 | 68.9% |
+| troubleshooting | 12 | 68.9% |
 | out_of_scope | 6 | N/A (拒答) |
-| **总体（有效）** | **36** | **74.2%** |
+| **总体（有效）** | **35** | **74.2%** |
 
-**说明**: 
-- 准确率 ≥70% 表示AI基本没有幻觉
-- 60-70% 表示少量编造内容
-- <60% 需检查Prompt或知识库质量
+**说明**:
+- 这里的“准确率”是**方案 A 的 groundedness**：回答关键词被检索文档覆盖的比例，不是与标准答案比对的正确率。
+- 74.2% 来自历史文档记录，有效样本只有 35 道，且会受模型版本与温度影响，**不保证逐位复现**；分类百分比仅作趋势参考。
+- groundedness 高只说明“回答能在文档里找到依据”，不能证明结论一定正确。下一步应补人工标注的答案正确率与引用准确率。
 
 ---
 

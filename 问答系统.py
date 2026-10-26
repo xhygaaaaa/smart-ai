@@ -64,14 +64,17 @@ def compute_assistant(prompt, rag, llm_client, evaluator):
         effective = f"{st.session_state.context_device} {prompt}"
 
     # 处理流程
-    if not evaluator.is_valid_question(effective):
-        answer = "⚠️ 问题无效：不符合客服场景（问题过短或没提到具体设备/动作）。"
+    # 注意：先校验用户原话，而不是补全后的 effective。
+    # 否则“你好”在已有设备上下文时会被补成“智能手环 你好”，
+    # 因包含设备词而绕过无效问题拦截，白白调用一次模型。
+    if not evaluator.is_valid_question(prompt):
+        answer = "⚠️ 问题无效：不符合客服场景（问题过短、偏离设备使用，或没提到具体动作）。"
         docs, category, accuracy, detail = [], "无效", None, None
     else:
         docs = rag.retrieve(effective, top_k=config.TOP_K)
         if not docs:
-            answer = "❌ 抱歉，知识库里没找到相关内容，请换个问法试试。"
-            category, accuracy, detail = "无效", None, None
+            answer = "该问题不在设备使用指南中，无法作答。请换个与设备使用相关的问法。"
+            category, accuracy, detail = "超纲", None, None
         else:
             try:
                 answer = llm_client.answer_question(effective, docs)

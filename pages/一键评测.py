@@ -1,4 +1,4 @@
-"""SmartGuide AI - 一键评测页面(批量跑42题测试集)"""
+"""SmartGuide AI - 一键评测页面(批量跑41题测试集)"""
 import streamlit as st
 import pandas as pd
 import time
@@ -108,7 +108,7 @@ def main():
         layout="wide"
     )
 
-    st.title("🎯 一键评测 - 批量测试42题")
+    st.title("🎯 一键评测 - 批量测试41题")
     st.markdown("验证Prompt优化效果，快速跑完整个测试集")
 
     if not require_login():
@@ -237,7 +237,7 @@ def main():
             )
 
     elif not st.session_state.eval_results:
-        st.info("👆 点击「开始评测」按钮，批量跑42题测试集")
+        st.info("👆 点击「开始评测」按钮，批量跑41题测试集")
 
 
 if __name__ == "__main__":

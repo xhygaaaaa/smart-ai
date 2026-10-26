@@ -124,9 +124,9 @@ LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 
 ```python
 # RAG配置
-TOP_K = int(os.getenv("TOP_K", "3"))
+TOP_K = int(os.getenv("TOP_K", "5"))
 ```
-- 同理 `int(...)` 把字符串转整数。`TOP_K=3` 表示检索时返回最相关的 3 段。
+- 同理 `int(...)` 把字符串转整数。`TOP_K=5` 表示检索时返回最相关的 5 段。
 
 ```python
 # 知识库路径
@@ -153,7 +153,7 @@ MANUALS = {
 # 评测配置
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "evaluation", "test_set.csv")
 ```
-- 同样的绝对路径技巧,指向 42 题测试集。
+- 同样的绝对路径技巧,指向 41 题测试集。
 
 ```python
 # 拒答信号词(用于识别超纲问题)

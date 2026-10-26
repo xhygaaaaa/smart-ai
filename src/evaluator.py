@@ -25,6 +25,13 @@ class Evaluator:
         if len(question.strip()) < 3:
             return False
 
+        # 明显偏离客服场景的话题：即使句子里带“怎么/什么”，也不该放行。
+        # （例如“今天天气怎么样”会因为“怎么”被动作词规则误判为有效问题。）
+        off_topic = ["天气", "股票", "新闻", "写诗", "写代码", "编程",
+                     "翻译", "讲笑话", "电影推荐", "旅游攻略", "星座"]
+        if any(kw in question for kw in off_topic):
+            return False
+
         # 检查是否包含设备关键词
         device_keywords = ["手环", "手表", "音箱", "台灯", "门锁", "智能"]
         has_device = any(kw in question for kw in device_keywords)
@@ -82,7 +89,7 @@ class Evaluator:
 
         # 2. 按标点和连接词切分短语
         # 移除常见连接词和语气词
-        clean_text = re.sub(r'[，。！？、；：""''（）\(\)《》\[\]]', ' ', text)
+        clean_text = re.sub(r"""[，。！？、；：""''（）()《》\[\]]""", ' ', text)
         filler_words = ['的', '了', '是', '在', '和', '与', '或', '即可',
                        '可以', '需要', '然后', '接着', '约', '大约']
         for word in filler_words:

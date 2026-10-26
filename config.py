@@ -27,7 +27,7 @@ LLM_MODEL = _get("LLM_MODEL", "gpt-3.5-turbo")
 LLM_TEMPERATURE = float(_get("LLM_TEMPERATURE", "0.3"))
 
 # RAG配置
-TOP_K = int(_get("TOP_K", "3"))
+TOP_K = int(_get("TOP_K", "5"))
 
 # 管理端密码(服务端页面登录用,可在 .env / secrets.toml 中覆盖)
 ADMIN_PASSWORD = _get("ADMIN_PASSWORD", "admin")
@@ -51,5 +51,8 @@ TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "evaluation", "test_set.
 REFUSAL_SIGNALS = [
     "不在设备使用指南", "不在使用指南", "无法作答", "无法回答",
     "无法提供", "没有收录", "不包含", "不提供", "不在手册", "不在指南",
-    "建议咨询", "超出知识库", "信息不足"
+    "建议咨询", "超出知识库", "信息不足",
+    # 测试集里的真实拒答话术（2026-10 补）
+    "无法给出", "未收录", "请咨询售卖商家", "建议联系售后咨询",
+    "无法解答", "不在本设备知识库", "没有相关信息", "无法判断", "无法确认",
 ]
