@@ -1093,11 +1093,11 @@ engine.runAndWait()
 
 | 指标 | 数值 |
 |------|------|
-| 平均响应时间 | 1.14 秒/题（中位 1.13 秒，最慢 2.34 秒） |
+| 平均响应时间 | 0.99 秒/题（中位 0.98 秒，最慢 2.90 秒；v3 全量 100 题实测） |
 | 检索时间 | <100ms |
-| LLM调用时间 | 0.6-2.3 秒 |
+| LLM调用时间 | 0.5-2.9 秒 |
 | 准确率计算 | <50ms |
-| 一键评测总时长 | 约 2 分 11 秒（100 题，DeepSeek，每题间隔 0.3 秒） |
+| 一键评测总时长 | 约 2–3 分钟（100 题，DeepSeek，每题间隔 0.3 秒） |
 | 内存占用 | 约150MB |
 
 ### 评测表现（可复现）
@@ -1117,7 +1117,7 @@ engine.runAndWait()
 
 结果目录：`evaluation/results/run_100_v3/`，包含
 `progress.json`（进度）、`results.jsonl`（逐题回答/检索数/两指标/耗时）、
-`results.csv`、`summary.json`、`meta.json`、`eval.log`。
+`results.csv`、`summary.json`、`meta.json`。
 
 > 扩到 100 题后 correctness 从 62.9% 升到 70.3%，是因为新增题更贴近手册原文；
 > groundedness 从 65.1% 降到 60.5%，说明部分手册外扩写（同义解释）仍会被判为“无依据”——
