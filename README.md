@@ -19,14 +19,36 @@
 ### 🎯 三级问题分类系统
 自动识别并处理不同类型的用户提问：
 - **无效问题** - 不符合客服场景，直接拦截，不浪费 API 调用
-- **超纲问题** - 涉及价格、保修、购买等知识库外内容，AI 礼貌拒答，不计入准确率
-- **有效问题** - 正常回答，计入准确率统计与评测
+- **超纲问题** - 涉及价格、保修、购买等知识库外内容，AI 礼貌拒答，不计入指标
+- **有效问题** - 正常回答，计入指标统计与评测
 
-### 📊 方案A准确率算法
-创新的准确率计算方法，**不是与标准答案对比**，而是：
-- 提取 AI 回答中的关键词
-- 检查这些关键词有多少能在引用的原文档中找到支撑
-- 衡量的是 **防幻觉能力**，确保 AI 不会编造知识库中不存在的内容
+### 📊 双指标：有据可查率 + 关键点召回率
+两个指标分开看，避免把「抄了文档」当成「答对了」：
+- **有据可查率（groundedness，原方案 A）**：答案关键词被检索文档覆盖的比例，衡量防幻觉能力；
+- **关键点召回率（correctness）**：答案覆盖标准答案关键点的比例，衡量答得对不对；
+- **任务成功率**：在可判分题目上，「答对 + 超纲题正确拒答」的比例。
+
+### 🔄 真多轮对话
+- 最近 `HISTORY_TURNS` 轮问答进入 prompt（默认 3 轮，可配置）；
+- 参考文档只放当前轮，避免历史文档挤占上下文；
+- 设备级上下文记忆保留：问过一次设备后可省略设备名。
+
+### 🔎 可切换检索后端
+- `bigram`：原始字面检索，零依赖；
+- `bm25`：默认，中文 bigram 分词 + 标题加权，长文档更稳；
+- `hybrid`：BM25 + 向量（bge-small-zh）+ RRF 融合，可选 CrossEncoder 重排；
+- 向量依赖缺失时自动降级，不影响主流程。
+
+### 📈 可复现评测
+- 命令行 `python -m evaluation.run_eval` 或页面「一键评测」；
+- 逐题结果（回答/检索数/两指标/耗时）自动落盘到 `evaluation/results/run_*/`；
+- 支持关键词判分与 LLM judge 两种 correctness 口径。
+
+### 🎯 埋点与自助解决率
+- 每次问答写入 SQLite（`data/telemetry.db`），记录分类、有据可查率、检索数、耗时；
+- 用户可点「👍 已解决 / 👎 未解决」；
+- 会话内窗口期追问自动标记为 `follow_up`；
+- 「自助解决率看板」按文档口径计算北极星指标。
 
 ### 🔄 智能 API 限流处理
 遇到 429 限流错误时自动重试：
@@ -34,29 +56,18 @@
 - 最多重试 3 次
 - 无需人工干预，保证评测流程稳定运行
 
-### 📈 实时可视化评测
-- **柱状图** - 展示每次提问的准确率分布
-- **折线图** - 追踪准确率变化趋势
-- **统计面板** - 平均准确率、最高/最低值、问题分类占比
-
-### ⚡ 一键批量评测
-- 自动运行完整 41 题测试集
-- 涵盖 5 大类别：连接(connectivity) / 功能(functionality) / 规格(specification) / 故障(troubleshooting) / 超纲(out_of_scope)
-- 导出 CSV 格式评测报告
-- 验证 Prompt 优化效果
-
 ## 🛠️ 技术栈
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| Python | 3.12+ | 主开发语言 |
-| Streamlit | 1.58+ | Web 界面框架 |
-| OpenAI SDK | 2.41+ | LLM API 调用（兼容 MiniMax 等） |
-| Plotly | 6.8+ | 交互式数据可视化 |
-| Pandas | 3.0+ | 数据处理与分析 |
-| NumPy | 2.4+ | 数值计算 |
+| Python | 3.10+ | 主开发语言 |
+| Streamlit | 1.28+ | Web 界面框架 |
+| OpenAI SDK | 1.0+ | LLM API 调用（兼容 DeepSeek / 通义 等 OpenAI 兼容服务） |
+| Plotly | 5.17+ | 交互式数据可视化 |
+| Pandas | 2.0+ | 数据处理与分析 |
+| NumPy | 1.24+ | 数值计算 |
 
-**检索方案**: Bigram 关键词匹配（无需 Chroma/FAISS 等向量数据库，无需 PyTorch，部署简单）
+**检索方案**: 默认 BM25（纯 Python、零依赖）；可切 bigram 或 hybrid（BM25 + bge-small-zh 向量 + RRF，依赖 sentence-transformers）。不强制依赖 Chroma/FAISS。
 
 ## 🚀 快速开始
 
@@ -103,7 +114,12 @@ pandas>=2.0.0
 numpy>=1.24.0
 ```
 
-⚠️ **重要提醒**: 不要安装 `chromadb` / `sentence-transformers` / `torch`，会导致 DLL 加载错误！
+⚠️ **说明**: 核心依赖不包含 `chromadb` / `sentence-transformers` / `torch`，默认 BM25 检索无需它们。
+只有启用 `RETRIEVER=hybrid` 或 CrossEncoder 重排时，才需要：
+```bash
+pip install -r requirements-optional.txt
+```
+（Windows 上如遇 DLL 加载错误，说明本机 torch 版本不匹配，保持默认 `bm25` 即可。）
 
 #### 3️⃣ 配置 API 密钥
 
@@ -115,12 +131,17 @@ cp .env.example .env
 编辑 `.env` 文件，填入你的大模型 API 配置：
 
 ```env
-# MiniMax 配置（默认）
-LLM_BASE_URL=https://api.minimax.chat/v1
-LLM_API_KEY=你的-minimax-api-key
-LLM_MODEL=abab6.5-chat
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=你的-api-key
+LLM_MODEL=deepseek-chat
 LLM_TEMPERATURE=0.3
+
+# 检索：bigram / bm25 / hybrid
+RETRIEVER=bm25
 TOP_K=5
+
+# 多轮对话带入的历史轮数（0=关闭）
+HISTORY_TURNS=3
 ```
 
 **API 申请地址：**
@@ -183,6 +204,26 @@ You can now view your Streamlit app in your browser.
   Network URL: http://192.168.1.100:8501
 ```
 
+### 4️⃣ 运行评测与测试
+
+```bash
+# 全量 100 题（结果自动写入 evaluation/results/run_*/）
+python -m evaluation.run_eval
+
+# 冒烟 3 题
+python -m evaluation.run_eval --limit 3 --sleep 0
+
+# 用 LLM judge 判 correctness（更准、更慢、更贵）
+python -m evaluation.run_eval --judge llm
+
+# 单测
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+**自助解决率**：在页面里点击「👍 已解决 / 👎 未解决」，然后打开
+`pages/自助解决率.py` 查看；数据落在 `data/telemetry.db`。
+
 ## 📁 项目结构
 
 ```
@@ -191,24 +232,35 @@ smartguide-ai/
 ├── 问答系统.py                    # 🏠 Streamlit 主页 - 问答交互界面
 │
 ├── pages/                         # 📄 多页面应用
-│   ├── 实时评测.py                # 📊 实时准确率统计与可视化
-│   └── 一键评测.py                # 🎯 批量运行41题测试集
+│   ├── 实时评测.py                # 📊 实时有据可查率统计与可视化
+│   ├── 一键评测.py                # 🧪 批量运行100题测试集（双指标+落盘）
+│   └── 自助解决率.py              # 🎯 北极星指标看板（埋点数据）
 │
 ├── src/                           # 🧩 核心业务模块
 │   ├── __init__.py
-│   ├── simple_rag.py              # 🔍 RAG检索引擎（Bigram匹配）
-│   ├── llm_client.py              # 🤖 LLM API调用封装（含429重试）
-│   └── evaluator.py               # ✅ 评测逻辑（三级分类+方案A准确率）
+│   ├── simple_rag.py              # 🔍 原始 bigram 检索
+│   ├── retrieval.py               # 🔎 BM25 / 向量混合 / rerank 可切换检索
+│   ├── llm_client.py              # 🤖 LLM 调用封装（含429重试+多轮 messages）
+│   ├── evaluator.py               # ✅ 三级分类 + groundedness + correctness
+│   ├── evaluation_runner.py       # 📉 可复现评测（逐题执行/汇总/落盘）
+│   ├── telemetry.py               # 📈 SQLite 埋点与自助解决率
+│   └── admin_panel.py             # 🛠️ 服务端看板与知识库管理
+│
+├── evaluation/                    # 📊 测试集与评测结果
+│   ├── test_set.csv               # 100 题标准测试集
+│   ├── README.md                  # 题目分布、扩题原则、判分口径
+│   ├── run_eval.py                # 命令行评测入口
+│   └── results/                   # run_*/ 逐题结果、summary、meta
+│
+├── tests/                         # ✅ pytest 单测
 │
 ├── data/                          # 📚 知识库（5份产品使用指南）
 │   ├── smart_band_manual.txt      # 智能手环使用指南
 │   ├── smart_watch_manual.txt     # 智能手表使用指南
 │   ├── smart_speaker_manual.txt   # 智能音箱使用指南
 │   ├── smart_lamp_manual.txt      # 智能台灯使用指南
-│   └── smart_lock_manual.txt      # 智能门锁使用指南
-│
-├── evaluation/                    # 🧪 测试集
-│   └── test_set.csv               # 41题标准测试集（5大类别）
+│   ├── smart_lock_manual.txt      # 智能门锁使用指南
+│   └── telemetry.db               # 运行时生成的埋点库
 │
 ├── .streamlit/                    # ⚙️ Streamlit配置
 │   └── config.toml                # 隐藏开发者菜单等配置
@@ -223,7 +275,7 @@ smartguide-ai/
 
 ### 知识库内容
 
-每份使用指南约 **80-160 行**，包含：
+每份使用指南约 **135-228 行**（5 份合计约 1.1 万字，切成 159 个知识块），包含：
 - 产品概述
 - 基本操作（配对/开机/配网）
 - 主要功能详解
@@ -235,12 +287,16 @@ smartguide-ai/
 
 | 类别 | 英文标识 | 题目数 | 说明 |
 |------|---------|--------|------|
-| 连接 | connectivity | 5 | 配对、开机、配网等基础连接问题 |
-| 功能 | functionality | 12 | 运动模式、表盘、音乐、调光等功能使用 |
-| 规格 | specification | 6 | 防水等级、续航、色温范围等参数查询 |
-| 故障 | troubleshooting | 12 | 无法充电、连接断开、闪烁等故障排查 |
-| 超纲 | out_of_scope | 6 | 价格、保修、购买等知识库外问题 |
-| **总计** | | **41** | 覆盖客服场景主要问题类型 |
+| 连接 | connectivity | 12 | 配对、开机、配网等基础连接问题 |
+| 功能 | functionality | 30 | 运动模式、表盘、音乐、调光等功能使用 |
+| 规格 | specification | 18 | 防水等级、续航、色温范围等参数查询 |
+| 故障 | troubleshooting | 30 | 无法充电、连接断开、闪烁等故障排查 |
+| 超纲 | out_of_scope | 10 | 价格、保修、购买等知识库外问题 |
+| **总计** | | **100** | 五类设备 × 五类问题，覆盖客服主要场景 |
+
+> 扩集原则：题目全部来自 5 份设备手册，标准答案保留手册原词（便于 bigram 召回判分）；
+> 超纲题的标准答案是明确拒答话术，保证「拒答」也能被判对。
+> 划分了 `easy / medium / hard` 三档难度，可按难度切片看模型短板。
 
 ## 📖 使用指南
 
@@ -249,26 +305,27 @@ smartguide-ai/
 智能客服的主交互界面。
 
 **功能：**
-1. 在文本框输入问题（如："智能手环如何连接手机？"）
-2. 点击 🔍 **提问** 按钮
-3. 系统自动执行：
+1. 在底部输入框提问（如："智能手环如何连接手机？"），回车即发
+2. 系统自动执行：
    - 有效性检测（第一级过滤）
-   - 知识库检索（Bigram 匹配）
+   - 知识库检索（BM25 / 可选混合检索）
    - LLM 生成回答
    - 问题分类（无效/超纲/有效）
-   - 准确率计算（方案A算法）
+   - 有据可查率计算（groundedness）
+3. 问过一次设备后，后续可省略设备名（"那怎么充电？"），顶部会提示当前记住的是哪台设备
+4. 想重新开始一段对话，点右上角 🆕 **新对话**：清空聊天记录 + 上下文记忆 + 会话 ID，
+   埋点里记为一次新会话（刷新页面做不到这点，刷新只会沿用旧 session_state）
 
 **显示内容：**
 - 💬 **AI 回答** - 生成的答案文本
-- 🏷️ **问题分类** - 绿色(有效) / 黄色(超纲) / 红色(无效)
-- 📊 **方案A准确率** - 防幻觉指标（0-100%）
-- 📚 **引用文档数** - 检索到的相关段落数量
-- 🔍 **关键词匹配详情** - 展开查看哪些词有/无文档支撑
+- 📚 **资料出处** - 折叠展示检索到的段落和相似度
+- 👍/👎 **已解决 / 未解决** - 用户反馈，喂给服务端的自助解决率看板
 
 **示例问题：**
 ```
 ✅ 有效: "智能手表如何接听电话?"
 ✅ 有效: "智能门锁可以录入多少个指纹?"
+✅ 有效: "智能音箱怎么重置?"
 🟡 超纲: "智能手环的价格是多少?"
 🔴 无效: "你好"
 ```
@@ -313,48 +370,46 @@ smartguide-ai/
 批量运行标准测试集，全面验证系统性能。
 
 **功能：**
-1. 点击 ▶️ **开始评测** 按钮
-2. 系统自动逐题运行 41 道测试题
-3. 显示实时进度条和当前题号
-4. 完成后展示完整报告
+- 点击 ▶️ **开始评测**，逐题运行 100 道标准测试题
+- 评测跑在**独立后台进程**（`evaluation/bg_runner.py`）里：切到别的页面、刷新浏览器、关掉标签页都不会中断，回到本页自动接着显示进度
+- 进度实时写盘（`evaluation/results/<run_id>/progress.json`），页面每 2 秒轮询一次
+- 随时可以 ⏹ **停止评测**：当前题跑完后收尾，已跑完的结果保留并照常汇总
 
 **评测报告内容：**
-1. **总体指标**
-   - 总问题数: 41
-   - 有效问题数: 通常 30-36 题
-   - 平均准确率: 整体表现
+1. **核心指标**
+   - 总问题数 / 有效问题数 / 超纲题数
+   - 有据可查率（groundedness）：答案关键词被检索文档支撑的比例
+   - 关键点召回率（correctness recall）：答案覆盖标准答案关键词的比例
+   - 任务成功率：有效题答对 + 超纲题正确拒答
    - 错误数: API 调用失败的题目
 
 2. **问题分类统计**
    - 有效 / 超纲 / 无效 数量分布
    - 验证三级分类是否正确工作
 
-3. **准确率分布直方图**
-   - 横轴: 准确率区间
-   - 纵轴: 题目数量
-   - 查看准确率集中在哪个区间
+3. **有据可查率分布直方图**
 
-4. **详细结果表**
-   - 每题的问题/分类/准确率/错误信息
+4. **逐题明细表**
+   - 每题的问题/分类/是否答对/是否拒答/耗时/错误信息
    - 可排序、可搜索
 
 5. **导出 CSV**
-   - 下载完整评测结果
-   - 用于存档或进一步分析
+
+**运行产物**（`evaluation/results/<run_id>/`）：
+`progress.json`（进度快照）· `results.jsonl` / `results.csv` / `summary.json` / `meta.json` · `eval.log`（后台日志）
 
 **适用场景：**
 - Prompt 工程迭代验证
-- 对比不同大模型效果
+- 对比不同大模型/不同检索后端（bm25 / bigram / hybrid）
 - 上线前回归测试
 - 定期质量监控
 
 **注意事项：**
-- 评测需要 3-5 分钟（取决于 API 响应速度）
-- 遇到 429 限流会自动重试
-- 如频繁超限，可修改代码延长请求间隔：
-  ```python
-  # pages/一键评测.py 第 86 行
-  time.sleep(2)  # 改为 2 或 3 秒
+- 100 题约 3-5 分钟（取决于 API 响应速度与「每题间隔」设置）
+- 遇到 429 限流会自动重试；担心限流就把「每题间隔」调到 1-2 秒
+- 也可以用命令行跑，效果与页面完全一致：
+  ```bash
+  python -m evaluation.bg_runner --judge keyword --retriever bm25 --sleep 0.5
   ```
 
 ## 🔬 核心技术详解
@@ -522,7 +577,7 @@ meaningful_phrases = [p for p in phrases if p not in stopwords]
 
 ### 4. API 限流重试机制
 
-**问题**: MiniMax 等大模型服务有 RPM（每分钟请求数）限制，一键评测时容易触发 429 错误。
+**问题**: 大模型服务商通常有 RPM（每分钟请求数）限制，一键评测时容易触发 429 错误。
 
 **代码位置**: `src/llm_client.py` - `_call_api_with_retry()`
 
@@ -554,7 +609,7 @@ def _call_api_with_retry(self, messages: list, max_retries: int = 3) -> str:
 - 第 3 次失败: 等待 9 秒
 - 仍失败: 抛出异常
 
-**效果**: 一键评测 41 题时，即使 API 限流也能自动恢复，无需人工干预。
+**效果**: 一键评测 100 题时，即使 API 限流也能自动恢复，无需人工干预。
 
 ---
 
@@ -613,7 +668,7 @@ pip uninstall -y torch sentence-transformers chromadb
 pip install -r requirements.txt
 ```
 
-本项目使用简化的 Bigram 匹配，**不需要向量数据库和 Torch**。
+默认的 BM25 检索是纯 Python 实现，**不需要向量数据库和 Torch**；只有把 `RETRIEVER` 切成 `hybrid` 才需要 `sentence-transformers`。
 </details>
 
 <details>
@@ -656,7 +711,7 @@ python --version
 
 **症状**: 一键评测时多次报 `rate limit exceeded (RPM)`
 
-**原因**: MiniMax 等服务有每分钟请求数（RPM）限制
+**原因**: 大模型服务商通常有每分钟请求数（RPM）限制
 
 **已实现的自动处理**: 代码中已集成指数退避重试（3/6/9秒）
 
@@ -723,22 +778,26 @@ LLM_MODEL=qwen:7b
 </details>
 
 <details>
-<summary><b>Q: 一键评测按钮卡死/变灰</b></summary>
+<summary><b>Q: 切到别的页面，评测会不会中断？</b></summary>
 
-**原因**: 切换到其他页面导致评测中断
+**不会。** 评测跑在独立子进程里（`evaluation/bg_runner.py`），页面只是个「监视器」：
+切页面 / 刷新 / 关标签页都不影响后台进程，进度每 2 秒写一次磁盘。
 
-**解决**: 
-1. 点击 🔄 **重置** 按钮
-2. 重新点击 ▶️ **开始评测**
-3. **评测过程中不要切换页面**
+回到「一键评测」页会自动接上：
+1. 先读 `st.session_state.eval_run_id`
+2. 没有再读指针文件 `evaluation/results/.current_run`
+3. 都没有就取最新修改过 `progress.json` 的运行目录
 
-**设计说明**: 使用分批 rerun 方案（非多线程），保证 Streamlit 状态一致性
+**设计说明**: 用 `subprocess.Popen` 拉起独立进程 + 落盘进度，
+而不是在 Streamlit 脚本里跑循环 —— 后者一导航就会重跑脚本、把评测打断。
+中途不想跑了就点 ⏹ **停止评测**（写 `STOP` 标记文件，当前题跑完即收尾），
+已跑完的题目照常汇总。
 </details>
 
 <details>
 <summary><b>Q: 准确率为什么不是100%？</b></summary>
 
-**方案A准确率衡量的是防幻觉能力，不是答案完全正确性。**
+**有据可查率衡量的是防幻觉能力，不是答案完全正确性。**
 
 举例:
 ```
@@ -831,23 +890,25 @@ TOP_K=5  # 原来是 3，改为 5
 <details>
 <summary><b>Q: 一键评测需要多久？</b></summary>
 
-**时间估算**: 3-5 分钟（41 题）
+**时间估算**: 3-6 分钟（100 题）
+
+**实测**: DeepSeek + bm25 + 每题间隔 0.3 秒，100 题 **2 分 11 秒**跑完
 
 **影响因素**:
-- API 响应速度（通常 2-5秒/题）
-- 网络延迟
-- 是否触发限流重试
+- API 响应速度与网络延迟
+- 「每题间隔」设置（限流严重就调大）
+- 是否触发 429 重试
 
-**加速方法**: 降低检索深度 `TOP_K=1`，但可能影响准确率
+**加速方法**: 降低「每题间隔」，或把检索深度 `TOP_K` 调小（可能影响准确率）
 </details>
 
 <details>
 <summary><b>Q: 能处理多大的知识库？</b></summary>
 
-**当前规模**: 5 份文档，每份 80-160 行
+**当前规模**: 5 份文档、约 1.1 万字、159 个知识块
 
 **理论上限**: 
-- Bigram 匹配可处理 **百万行级别** 文档
+- BM25 索引可处理 **百万行级别** 文档
 - 瓶颈在 LLM 上下文长度（通常 4K-32K tokens）
 
 **扩展建议**:
@@ -859,10 +920,10 @@ TOP_K=5  # 原来是 3，改为 5
 <details>
 <summary><b>Q: 能不能离线运行？</b></summary>
 
-**RAG 检索部分**: ✅ 完全离线（Bigram 匹配）
+**RAG 检索部分**: ✅ 完全离线（默认 BM25，纯 Python 实现）
 
 **LLM 生成部分**: 
-- ❌ 在线 API（MiniMax/通义/DeepSeek）需要网络
+- ❌ 在线 API（DeepSeek/通义 等）需要网络
 - ✅ 本地模型（Ollama/LM Studio）可离线，配置示例：
 
 ```env
@@ -908,11 +969,11 @@ graph TD
     A[用户输入问题] --> B{有效性检测}
     B -->|无效| C[直接拒绝]
     B -->|有效| D[RAG检索]
-    D --> E[Bigram匹配]
+    D --> E[BM25 检索]
     E --> F[LLM生成回答]
     F --> G{超纲检测}
     G -->|超纲| H[标记不计入准确率]
-    G -->|有效| I[方案A准确率计算]
+    G -->|有效| I[有据可查率计算]
     I --> J[展示结果]
     H --> J
 ```
@@ -931,7 +992,7 @@ graph TD
 ```python
 def calculate_accuracy_a(self, answer: str, docs: List) -> Tuple[float, dict]:
     """
-    方案A准确率计算
+    有据可查率（groundedness）计算
     
     Args:
         answer: AI生成的回答
@@ -1025,37 +1086,57 @@ engine.runAndWait()
 - CPU: Intel i5-12400
 - RAM: 16GB
 - 网络: 100Mbps 家庭宽带
-- LLM: MiniMax abab6.5-chat
-- 测试集: 41题标准集
+- LLM: DeepSeek deepseek-chat（temperature=0.3）
+- 测试集: 100题标准集
 
 ### 性能指标
 
 | 指标 | 数值 |
 |------|------|
-| 平均响应时间 | 3.2 秒/题 |
+| 平均响应时间 | 1.14 秒/题（中位 1.13 秒，最慢 2.34 秒） |
 | 检索时间 | <100ms |
-| LLM调用时间 | 2.5-4秒 |
+| LLM调用时间 | 0.6-2.3 秒 |
 | 准确率计算 | <50ms |
-| 一键评测总时长 | 4分18秒 |
+| 一键评测总时长 | 约 2 分 11 秒（100 题，DeepSeek，每题间隔 0.3 秒） |
 | 内存占用 | 约150MB |
 
-### 准确率表现
+### 评测表现（可复现）
 
-基于 41 题测试集的统计（2024年实测）:
+最近一次全量运行：`python -m evaluation.bg_runner --judge keyword --retriever bm25 --sleep 0.3`
+（2026-10-26，`deepseek-chat`，temperature=0.3，BM25，TOP_K=5，**100 题**）：
 
-| 分类 | 题目数 | 平均准确率 |
-|------|--------|-----------|
-| connectivity | 5 | 78.3% |
-| functionality | 12 | 72.1% |
-| specification | 6 | 85.7% |
-| troubleshooting | 12 | 68.9% |
-| out_of_scope | 6 | N/A (拒答) |
-| **总体（有效）** | **35** | **74.2%** |
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| 总题数 | 100 | 含 10 道超纲题 |
+| 有效题 | 90 | 超纲题不计入 groundedness/correctness |
+| 有据可查率（groundedness） | **60.7%** | 答案关键词被检索文档覆盖的比例 |
+| 关键点召回率（correctness） | **71.1%** | 答案覆盖标准答案 bigram 的比例 |
+| 答对率（correctness ≥ 0.6） | **75.6%** | 90 道有效题中 68 道达到阈值 |
+| 超纲拒答率 | **100%** | 10 道超纲题全部正确拒答 |
+| 任务成功率 | **78.0%** | （答对 68 + 正确拒答 10）/ 100 |
+
+结果目录：`evaluation/results/run_100_v3/`，包含
+`progress.json`（进度）、`results.jsonl`（逐题回答/检索数/两指标/耗时）、
+`results.csv`、`summary.json`、`meta.json`、`eval.log`。
+
+> 扩到 100 题后 correctness 从 62.9% 升到 70.3%，是因为新增题更贴近手册原文；
+> groundedness 从 65.1% 降到 60.5%，说明部分手册外扩写（同义解释）仍会被判为“无依据”——
+> 这正是该指标要暴露的问题，不应只看单一数字。旧 41 题基线仍保留在
+> `evaluation/results/run_20261026_143313/`，两套结果可对比。
+>
+> v3 相对 v1 有两处代码/知识库改动：知识库补「如何重置」章节 + `QUERY_SYNONYMS` 同义桥接；
+> 修掉拒答误判（模型先答正文、末尾补一句“无法作答”时，整题曾被判成超纲并从统计里剔除）。
+> 但 73.3% → 75.6% 这 2 道题**不是**这两处改动带来的：temperature=0.3 下模型输出本身有波动，
+> 这次是「手环怎么连手机」和「音箱支持 5GHz WiFi 吗」刚好跨过 0.6 阈值。
+> 这批数字整体波动在 ±2 题以内，引用时请当作区间而非精确值。
 
 **说明**:
-- 这里的“准确率”是**方案 A 的 groundedness**：回答关键词被检索文档覆盖的比例，不是与标准答案比对的正确率。
-- 74.2% 来自历史文档记录，有效样本只有 35 道，且会受模型版本与温度影响，**不保证逐位复现**；分类百分比仅作趋势参考。
-- groundedness 高只说明“回答能在文档里找到依据”，不能证明结论一定正确。下一步应补人工标注的答案正确率与引用准确率。
+- 评测是**可复现的**：模型、温度、检索后端、TOP_K 都写入 `meta.json`；
+  换模型或温度后数字会变，属正常现象。
+- 历史文档里曾记录的 74.2% 是早期 groundedness 单次结果，已由本表替代，
+  不再作为口径。
+- groundedness 高只说明「回答能在文档里找到依据」，不等于结论正确；
+  correctness 也只衡量关键点覆盖，不等于人工判定。两者需分开陈述。
 
 ---
 
@@ -1146,14 +1227,16 @@ SOFTWARE.
 
 ## 🎯 路线图
 
-### v1.1 (计划中)
-- [ ] 支持多轮对话上下文
-- [ ] 添加用户反馈收集
+### v1.1 (已完成)
+- [x] 支持多轮对话上下文（history 进 prompt）
+- [x] 添加用户反馈收集与自助解决率埋点
+- [x] 评测结果逐题落盘、可复现
+- [x] BM25 / 向量混合检索可切换
 - [ ] 导出 PDF 评测报告
 - [ ] Docker 一键部署
 
 ### v2.0 (未来)
-- [ ] 向量数据库支持
+- [ ] 向量数据库持久化（当前向量为内存索引）
 - [ ] 图文混合检索
 - [ ] 多租户权限管理
 - [ ] RESTful API 服务

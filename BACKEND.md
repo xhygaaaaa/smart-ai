@@ -15,6 +15,10 @@
 - [第四部分:`src/evaluator.py` 评测引擎](#第四部分srcevaluatorpy-评测引擎)
 - [第五部分:`问答系统.py` 主页](#第五部分问答系统py-主页)
 - [第六部分:`pages/实时评测.py`](#第六部分pages实时评测py)
+- [附录 A:`src/telemetry.py` 埋点与自助解决率](#附录-atelemetrypy-埋点与自助解决率)
+- [附录 B:`src/evaluation_runner.py` 可复现评测引擎](#附录-bevaluation_runnerpy-可复现评测引擎)
+- [附录 C:`src/auth.py` 与 `src/admin_panel.py` 服务端](#附录-cauthpy-与-srcadmin_panelpy-服务端)
+- [附录 D:文档同步记录](#附录-d文档同步记录)
 - [第七部分:`pages/一键评测.py`](#第七部分pages一键评测py)
 - [第八部分:综合面试题库](#第八部分综合面试题库)
 - [第九部分:知识点总结速查表](#第九部分知识点总结速查表)
@@ -28,10 +32,10 @@
 | 层 | 技术 | 在项目里干什么 |
 |----|------|---------------|
 | 前端/UI | Streamlit | 用 Python 写网页,不用碰 HTML/JS |
-| 检索 | 自研 bigram + Jaccard | 从文档里找相关段落 |
-| 大模型 | OpenAI SDK(连 MiniMax) | 生成回答 |
+| 检索 | BM25（默认）/ bigram / 混合检索 | 从文档里找相关段落 |
+| 大模型 | OpenAI SDK（连 DeepSeek） | 生成回答 |
 | 配置 | python-dotenv | 从 `.env` 读密钥等 |
-| 数据 | pandas | 读测试集 CSV、做统计 |
+| 数据 | pandas + SQLite | 读测试集 CSV、存埋点事件 |
 | 可视化 | plotly | 画柱状图/折线图/直方图 |
 
 ### 0.2 一次完整请求的数据流(必须背下来)
@@ -46,7 +50,7 @@
 [evaluator.is_valid_question()] 第一级:有效性检查
         │ (有效)
         ▼
-[simple_rag.retrieve()] 从5份文档检索 top_k=3 段最相关内容
+[retriever.retrieve()] 设备定向 + 同义词扩展后，从 159 段里检索 top_k=5 段
         │  返回 [(设备名, 段落, 得分), ...]
         ▼
 [llm_client.answer_question()] 把文档+问题拼成Prompt → 调大模型
@@ -56,34 +60,38 @@
 [evaluator.classify_question()] 第二级:是否拒答→分类
         │ (有效)
         ▼
-[evaluator.calculate_accuracy_a()] 算方案A准确率
+[evaluator.calculate_accuracy_a()] 算有据可查率（groundedness）
+        │
+        ▼
+[telemetry.log_query()] 写 SQLite 埋点（耗时/分类/有据可查率/是否追问）
         │
         ▼
 存入 st.session_state.current_result + history
         │
         ▼
-页面渲染:答案 + 分类 + 准确率 + 引用文档
+页面渲染:答案 + 分类 + 有据可查率 + 引用文档 + 👍/👎 反馈
 ```
 
-**记忆口诀:校验 → 检索 → 生成 → 分类 → 评分 → 存储 → 渲染。**
+**记忆口诀:校验 → 检索 → 生成 → 分类 → 评分 → 埋点 → 存储 → 渲染。**
 
 ### 0.3 模块依赖关系
 
 ```
-config.py  ◄──────────┬──────────┬──────────┐
-   ▲                   │          │          │
-   │              simple_rag  llm_client  evaluator
-   │                   ▲          ▲          ▲
-   │                   └────┬─────┴────┬─────┘
-   └────────────────────────┤          │
-                       问答系统.py  pages/*.py
+config.py  ◄────┬────────┬────────┬────────┬────────┐
+   ▲             │        │        │        │        │
+   │         retrieval  llm_client evaluator telemetry auth
+   │             ▲        ▲        ▲        ▲        ▲
+   │             └────────┴────┬───┴────────┴────────┘
+   └───────────────────────────┤
+                          问答系统.py / pages/*.py / evaluation_runner.py
 ```
 
 - `config.py` 是最底层,谁都依赖它,它不依赖任何业务模块。
-- 三个 `src/` 模块互相独立(低耦合),只依赖 config。
-- 三个页面是"编排层",把 src 模块组合起来用。
+- `src/` 下的模块互相独立(低耦合),只依赖 config。`retrieval.py` 会引用
+  `simple_rag.py` 的同义词表,这是唯一的模块间依赖。
+- 页面和 `evaluation_runner.py` 是"编排层",把 src 模块组合起来用。
 
-> **架构考点:这是典型的分层架构(Layered Architecture)。** 配置层 → 能力层(src) → 编排层(页面)。好处是 src 里的每个模块都能单独测试、单独替换。比如想换检索算法,只动 `simple_rag.py`,上层完全不用改——因为大家都依赖"接口"(retrieve 方法的签名),而不是实现。
+> **架构考点:这是典型的分层架构(Layered Architecture)。** 配置层 → 能力层(src) → 编排层(页面)。好处是 src 里的每个模块都能单独测试、单独替换。比如想换检索算法,只动 `retrieval.py`,上层完全不用改——因为大家都依赖"接口"(`retrieve(query, top_k)` 的签名),而不是实现。这也是为什么 bigram / bm25 / hybrid 三种实现可以随时切换。
 
 ---
 
@@ -153,7 +161,7 @@ MANUALS = {
 # 评测配置
 TEST_SET_PATH = os.path.join(os.path.dirname(__file__), "evaluation", "test_set.csv")
 ```
-- 同样的绝对路径技巧,指向 41 题测试集。
+- 同样的绝对路径技巧,指向 100 题测试集。
 
 ```python
 # 拒答信号词(用于识别超纲问题)
@@ -174,118 +182,178 @@ REFUSAL_SIGNALS = [
 
 ---
 
-## 第二部分:`src/simple_rag.py` 检索引擎
+## 第二部分:`src/retrieval.py` 检索引擎
 
-### 2.1 整体职责
+> ⚠️ 这一部分已按当前代码重写。旧版本用的是 `simple_rag.py` 的 bigram + Jaccard，
+> 现在 `simple_rag.py` 只作为降级兜底保留，默认走 `retrieval.py` 的 BM25。
 
-输入一个问题,从 5 份文档的所有段落里,找出最相关的 top_k 段。用的是 **bigram(二元字组)+ Jaccard 相似度**,纯字符串运算,无需向量模型。
+### 2.0 现在的检索层结构
 
-### 2.2 算法原理(先讲清楚再看代码)
+```
+build_retriever(documents)          # 工厂函数，按 config.RETRIEVER 选实现
+   ├── "bigram"  → SimpleRAG        # 最早的 bigram 版，零依赖，兜底
+   ├── "bm25"    → BM25RAG          # ← 默认
+   └── "hybrid"  → HybridRAG        # BM25 + 向量(RRF) [+ 可选 rerank]
+                     ├── 向量依赖装不上 → 自动降级为 BM25
+                     └── RERANK=true → 再加 bge-reranker 重排
+```
 
-**Bigram(二元组)**:把一段文字按"每相邻 2 个字"切开。
-- "防水等级" → {"防水", "水等", "等级"}
-
-**Jaccard 相似度**:衡量两个集合的重合程度。
-- 公式:`交集大小 / 并集大小`
-- 取值 0~1,1 表示完全相同,0 表示毫无重合。
-- 例:问题 bigram={"防水","水等","等级"},某段落 bigram={"防水","水5","5A"},交集={"防水"}=1,并集=5,相似度=1/5=0.2。
-
-**为什么用 bigram 而不是单字**:单字噪声太大(几乎任何句子都含"的""是")。两字组合更能代表"词",区分度更好。又比向量模型轻——这是**复杂度和效果的折中**。
-
-### 2.3 逐行解读
+三个检索器对外接口完全一致：
 
 ```python
-"""简化版RAG检索模块 - 基于bigram关键词匹配，不依赖向量数据库"""
-import re
-from typing import List, Tuple
+retriever.retrieve(query, top_k) -> [(设备名, 段落, 分数), ...]
 ```
-- `re`:正则,用来清洗文本(只保留中英文数字)。
-- `typing` 的 `List, Tuple`:类型注解,让函数签名更清晰、IDE 能补全、便于阅读。纯文档作用,运行时不强制。
+
+**接口统一是这里最值得讲的设计**：上层（主页、评测、一键评测页）完全不关心底层是哪一
+个，只要换配置就能对比三种检索方案的效果。评测里 `--retriever` 参数就是靠这个做的。
+
+### 2.1 BM25RAG（默认）
+
+#### 算法原理
+
+BM25 是关键词检索的工业标准（Elasticsearch 默认打分），解决的是"怎么给一段文字和一句
+查询算相关性"。
+
+```
+idf(t) = ln(1 + (N - df(t) + 0.5) / (df(t) + 0.5))
+score  = Σ idf(t) · [tf·(k1+1)] / [tf + k1·(1 - b + b·dl/avgdl)]
+参数：k1 = 1.5，b = 0.75
+```
+
+三个部分各自解决一个问题：
+
+| 部分 | 作用 | 不这么做会怎样 |
+|---|---|---|
+| `idf(t)` | 越稀有的词权重越高 | "的""是"这类词会主导打分 |
+| `k1 = 1.5` | 词频**饱和**：3 次比 1 次明显加分，40 次比 20 次几乎不涨 | 堆砌关键词就能刷高分 |
+| `b = 0.75` | 长段落打折 | 长段落靠词多霸榜 |
+
+#### 相比教科书 BM25，这里加了两处领域适配
+
+**① 标题权重 3 倍**（`retrieval.py` 的 `_chunk_tokens`）：
 
 ```python
-class SimpleRAG:
-    """基于关键词匹配的简单RAG检索"""
-
-    def __init__(self, documents: dict):
-        self.documents = documents
-        self.doc_chunks = {}  # {设备名称: [段落列表]}
-        self._build_index()
+return tokenize(body) + tokenize(heading) * 2
 ```
-- 构造函数接收 `documents`(设备名→全文内容的字典)。
-- `self.doc_chunks`:存放切好的段落,结构是 `{设备名: [段落1, 段落2, ...]}`。
-- `self._build_index()`:**在初始化时就把索引建好**。这样每次检索直接用,不用重复切分。前缀 `_` 表示"私有方法"(约定,Python 没有真正的私有)。
-- **设计考点**:这是"预处理一次,多次复用"的思想。建索引是相对重的操作,放构造函数里只做一次。配合上层的 `@st.cache_resource`,整个对象只创建一次。
+
+标题的词算 3 遍。效果：问"续航多久"，优先落在标题是"电池续航"的段落，而不是正文里
+顺带提了一句续航的段落。**这是标准 BM25 没有的，属于为手册类文档做的改造。**
+
+**② 分数归一化**（`retrieve` 末尾）：
 
 ```python
-    def _build_index(self):
-        """将每份文档切分成段落"""
-        for name, content in self.documents.items():
-            chunks = [line.strip() for line in content.split('\n')
-                     if line.strip() and len(line.strip()) > 10]
-            self.doc_chunks[name] = chunks
+best = top[0][2] or 1.0
+top = [(d, c, s / best) for d, c, s in top]
 ```
-- 遍历每份文档。`content.split('\n')` 按换行切成一行行。
-- 列表推导式做了三件事:
-  - `line.strip()`:去掉首尾空白。
-  - `if line.strip()`:过滤纯空行(空字符串是 falsy)。
-  - `and len(line.strip()) > 10`:过滤太短的行(少于10字符,通常是标题或无意义碎片)。
-- **坑点**:`line.strip()` 在这里算了 3 次(推导式里出现 3 次)。微优化可以先存成变量。数据量小无所谓,但面试官可能会问"这里有没有重复计算"。
-- **设计取舍**:用"按行切"做 chunk,简单但粗糙。更好的做法是"按语义段落切"或"固定窗口+重叠(sliding window with overlap)"。但对结构化的说明书,按行切已够用——又是**够用就好**。
+
+第一名恒为 1.0，其余按比例缩放。好处有二：前端能显示"相关度 100%"；不同查询之间可比。
+
+#### 分词（`tokenize`）
+
+不引入 jieba，保持零依赖：
+
+- 中文连续段：切成**所有相邻二字组**（"防水等级" → 防水/水等/等级）
+- 英文和数字：**整段保留**（"5atm"、"100" 不被拆开）
+
+**为什么英文数字整段保留**：型号、规格必须精确匹配，"5ATM" 拆成 "5a"/"at"/"tm"
+就废了。这是中文 bigram + 英文整词的混合策略。
+
+#### 设备定向与同义词扩展（`detect_device` / `expand_query`）
+
+1. 问题里命中设备词（手环/手表/音箱/台灯/门锁）→ 只在该设备的段落里打分
+2. 命中之后**把设备词从查询里删掉**再算分——否则"手环"会让"产品概述"这种泛泛的段落
+   拿高分
+3. 口语词扩展成手册术语（"充不进电" → 无法充电/充电故障/充电触点/充电器）
+
+> **为什么第 2 步必须做**：这是实测踩出来的坑。设备词在几乎所有段落里都出现，idf 会
+> 把它压得很低，但它仍会贡献一点分数，足够把泛泛的段落顶上去。
+
+### 2.2 DenseRAG（向量）
 
 ```python
-    def _extract_bigrams(self, text: str) -> set:
-        clean_text = re.sub(r'[^一-龥a-zA-Z0-9]', '', text)
-        bigrams = set()
-        for i in range(len(clean_text) - 1):
-            bigram = clean_text[i:i+2]
-            if len(bigram) == 2:
-                bigrams.add(bigram)
-        return bigrams
+model = SentenceTransformer(config.EMBEDDING_MODEL)   # 默认 BAAI/bge-small-zh-v1.5
+embeddings = model.encode(chunks, normalize_embeddings=True)
+similarity = q · c                                    # 归一化后点积 = 余弦相似度
 ```
-- `re.sub(r'[^一-龥a-zA-Z0-9]', '', text)`:正则替换。`[^...]` 是"非",即**删掉所有不是中文、字母、数字的字符**(标点、空格、emoji 全删)。`一-龥` 是中文 Unicode 范围。
-- 循环 `range(len-1)`:从第 0 到倒数第 2 个字符,每次取 `[i:i+2]` 两个字符组成 bigram。
-- `if len(bigram) == 2`:边界保护(理论上循环范围已保证,这是冗余但安全的检查)。
-- 用 `set`:**自动去重**,且后面算交并集是 O(1) 查找,高效。
-- **复杂度**:O(n),n 是文本长度。
+
+- **懒加载**：`SentenceTransformer` 在 `__init__` 里才导入，没装依赖时抛异常
+- **自动降级**：`_try_dense()` 捕获所有异常返回 None，工厂退回 BM25，主流程不受影响
+
+**面试点**：向量强在"换个说法也能匹配"（充不进电 ≈ 无法充电），弱在数字型号容易糊
+（"支持 5ATM" 和 "支持 10ATM" 在语义空间里很近）。所以它和 BM25 是**互补**关系。
+
+### 2.3 HybridRAG（BM25 + 向量，RRF 融合）
+
+#### 为什么不能直接把两路分数相加
+
+BM25 的分数是归一化后的相对值，向量是余弦相似度，**量纲和分布都不同**。直接相加等于
+拿米加公斤。
+
+#### RRF：只看名次，不看分数
+
+```
+score(chunk) = Σ  weight / (60 + rank)
+
+BM25 名次第 1 → (1-α)/61
+向量 名次第 1 → α/61
+```
+
+- `α = HYBRID_ALPHA = 0.5`：BM25 权重 `1-α`，向量权重 `α`。α=0 纯 BM25，α=1 纯向量
+- `60`：平滑常数，来自原论文。作用是压平名次之间的差距——第 1 名 1/61、第 2 名 1/62，
+  差别很小，结果稳定，不会因为某一路的第一名特别高就把另一路全压死
+
+#### 候选池先放大再收缩
 
 ```python
-    def retrieve(self, query: str, top_k: int = 3) -> List[Tuple[str, str, float]]:
-        query_bigrams = self._extract_bigrams(query)
-
-        results = []
-        for device_name, chunks in self.doc_chunks.items():
-            for chunk in chunks:
-                chunk_bigrams = self._extract_bigrams(chunk)
-                if len(query_bigrams) > 0:
-                    intersection = len(query_bigrams & chunk_bigrams)
-                    union = len(query_bigrams | chunk_bigrams)
-                    score = intersection / union if union > 0 else 0
-
-                    if score > 0:
-                        results.append((device_name, chunk, score))
-
-        results.sort(key=lambda x: x[2], reverse=True)
-        return results[:top_k]
+pool = max(top_k * 4, 20)          # top_k=5 时各召回 20 条
+fused = sorted(rrf.items())[:pool] # 融合后再取 5
 ```
-- 先把 query 转成 bigram 集合(只算一次)。
-- 双层循环:遍历每个设备的每个段落。
-- `query_bigrams & chunk_bigrams`:集合**交集**(共同的 bigram)。
-- `query_bigrams | chunk_bigrams`:集合**并集**。
-- `score = intersection / union`:Jaccard 相似度。`if union > 0 else 0` 防除零。
-- `if score > 0`:只保留有重合的段落,过滤完全不相关的。
-- `results.sort(key=lambda x: x[2], reverse=True)`:按元组第3个元素(score)**降序排序**。`lambda x: x[2]` 是排序键。
-- `return results[:top_k]`:取前 top_k 个。**切片不会越界**——即使结果不足 top_k 个,也只返回实际数量,不报错。
-- **复杂度**:O(段落数 × 段落平均长度)。每次检索都重新算所有段落的 bigram,**有优化空间**:可以把每个 chunk 的 bigram 在建索引时就预计算好,缓存起来。
 
-### 2.4 这个文件的面试考点
+融合的价值就在于"一路漏掉的能被另一路补回来"，所以必须先把候选池放大。
 
-- **Q:解释一下 Jaccard 相似度。** → 交集/并集,衡量两个集合重合度,0~1。
-- **Q:为什么用 bigram 不用单字?** → 单字噪声大区分度低,bigram 更接近"词"的粒度。
-- **Q:这个检索方案和向量检索比,优劣?** → 优:轻量、无依赖、启动快、可解释;劣:**只能匹配字面,不懂语义**(用户问"防水吗"、文档写"5ATM"就匹配不上,因为字面不重合)。小知识库够用,大规模或口语化场景要上向量检索。
-- **Q:有什么性能优化点?** → ① 预计算并缓存每个 chunk 的 bigram(目前每次检索都重算);② chunk 数量大时可以先用倒排索引粗筛,再算相似度;③ `line.strip()` 重复计算可消除。
-- **Q:如果要加同义词支持怎么办?** → 字面匹配的硬伤。可以维护同义词表做查询扩展(query expansion),或者直接换成向量检索。
+#### 可选重排
 
----
+```python
+if self.reranker is not None:
+    pairs = [(query, chunk) for chunk in fused]
+    scores = self.reranker.predict(pairs)     # BAAI/bge-reranker-base
+```
+
+召回是"问题、文档分开编码"（双塔，快但粗）；重排是"问题+文档拼在一起送进模型"
+（交叉编码器，准但慢）。所以重排只作用在 20 条候选上，不作用在全量。
+
+### 2.4 SimpleRAG（bigram 兜底）
+
+`src/simple_rag.py` 是最早的实现，现在只在 `RETRIEVER=bigram` 或依赖缺失时使用。
+
+当前打分公式（已不是 Jaccard）：
+
+```
+覆盖率   = |查询∩段落| / |查询|          × 0.55
+精确率   = |查询∩段落| / |段落|          × 0.20
+标题命中 = |查询∩标题| / |查询|          × 0.25
+```
+
+分母**以查询为基准**是有原因的：早期版本用 `min(查询词数, 段落词数)` 当分母，等于
+**段落越短分越高**——"产品概述"这种两三行的段落稳拿第一，把真正的"电池续航"挤下去。
+改成覆盖率为主之后就正常了。
+
+### 2.5 这一部分的面试考点
+
+- **Q:BM25 的 k1 和 b 各控制什么?** → k1 控制词频饱和（防堆词），b 控制长度归一化强度
+  （防长文霸榜）。k1 越大，词频影响越久才饱和；b=0 完全不归一化，b=1 完全归一化。
+- **Q:为什么不直接用向量检索?** → ① 离线私有化环境装不了模型；② 型号/数字要精确匹配；
+  ③ 当前 159 段规模 BM25 够用。向量和混合都实现了，配置一改就能开。
+- **Q:RRF 为什么用名次不用分数?** → 两路分数量纲不同，直接加权求和无意义；名次是天然
+  归一化的，且对异常高分鲁棒。
+- **Q:RRF 的 60 是怎么来的?** → 原论文的经验值，作用是压平名次差距。它是平滑项，不敏感，
+  主要影响"头部是否过于集中"。
+- **Q:为什么标题要加权?** → 手册类文档里，标题就是这一节的命题。正文可能只是顺带提到
+  某个词，标题命中才说明这一节真在讲它。
+- **Q:混合检索一定更好吗?** → 不一定。两路都弱的时候融合也救不回来；而且要额外下模型、
+  增加延迟。必须用评测集对比，不能凭信仰。
+- **Q:依赖缺失时怎么办?** → 工厂里 `_try_dense()` 捕获异常返回 None，自动降级 BM25，
+  主流程不报错。**降级路径是必须设计的，客户现场什么情况都有。**
 
 ## 第三部分:`src/llm_client.py` 大模型调用层
 
@@ -303,7 +371,7 @@ from openai import OpenAI
 import config
 ```
 - `time`:用于重试时 `sleep` 等待。
-- `from openai import OpenAI`:OpenAI 官方 SDK 的客户端类。**注意**:虽然叫 OpenAI,但只要服务商提供"OpenAI 兼容"接口(MiniMax/通义/DeepSeek 都提供),就能用这个 SDK 连过去——这就是"OpenAI 兼容格式"成为事实标准的好处。
+- `from openai import OpenAI`:OpenAI 官方 SDK 的客户端类。**注意**:虽然叫 OpenAI,但只要服务商提供"OpenAI 兼容"接口(DeepSeek/通义/MiniMax 都提供),就能用这个 SDK 连过去——这就是"OpenAI 兼容格式"成为事实标准的好处。
 - `Optional` 这里其实没用到(import 了没使用),属于可清理的冗余 import。面试官眼尖可能会问。
 
 ```python
@@ -316,7 +384,7 @@ class LLMClient:
         self.model = config.LLM_MODEL
         self.temperature = config.LLM_TEMPERATURE
 ```
-- 构造时创建一个 `OpenAI` 客户端实例。`base_url` 指向 MiniMax 而非 OpenAI,这就是"换服务商只改配置"的实现。
+- 构造时创建一个 `OpenAI` 客户端实例。`base_url` 指向 DeepSeek 而非 OpenAI,这就是"换服务商只改配置"的实现。
 - 把 model 和 temperature 存成实例属性,后面调用时复用。
 
 ```python
@@ -427,7 +495,7 @@ class LLMClient:
 
 ### 4.1 整体职责
 
-给 AI 回答打分和分类。三个能力:① 有效性判断(`is_valid_question`);② 拒答判断(`is_refusal`);③ 方案A准确率(`calculate_accuracy_a`),外加关键词提取(`extract_keywords_v2`)和总分类(`classify_question`)。
+给 AI 回答打分和分类。三个能力:① 有效性判断(`is_valid_question`);② 拒答判断(`is_refusal`);③ 有据可查率(`calculate_accuracy_a`,原名方案A),外加关键词提取(`extract_keywords_v2`)和总分类(`classify_question`)。
 
 ### 4.2 逐行解读
 
@@ -523,7 +591,7 @@ class Evaluator:
 - `stopwords` 集合再过滤一遍残留的无意义词。用 `set` 是因为 `in` 判断 O(1)。
 - **这就是文档里说的"关键词提取演进"**:v1 用粗暴 2 字滑窗(会切出"约天""ma"),v2 改成"先抓数字单位 + 去虚词 + 抓有意义短语"三步法。**这是真实迭代踩坑的产物。**
 
-#### (4) 方案A准确率 `calculate_accuracy_a`
+#### (4) 有据可查率（groundedness）`calculate_accuracy_a`
 
 ```python
     def calculate_accuracy_a(self, answer: str,
@@ -561,7 +629,7 @@ class Evaluator:
 - 提取文档的关键词集合。
 - `answer_keywords & doc_keywords`:交集 = **回答里有依据的词**。
 - `answer_keywords - doc_keywords`:差集 = **回答里没依据的词(疑似幻觉)**。
-- `accuracy = 有依据的词数 / 回答总词数`:这就是方案A的定义。
+- `accuracy = 有依据的词数 / 回答总词数`:这就是有据可查率的定义。
 - **为什么用 `&` 和 `-` 集合运算**:简洁高效,O(min(n,m))。这是用对数据结构带来的代码优雅。
 - 返回值是 `(准确率, 详情字典)` 元组,详情用于前端展示"哪些词没依据"。**算法不只给结论,还给可解释的中间结果**——好的评测要可追溯。
 
@@ -589,8 +657,8 @@ class Evaluator:
 - **Q:三级分类为什么是这个顺序?** → 无效判断最便宜且不依赖 AI,放最前;超纲依赖 AI 输出,放后。成本和依赖关系决定顺序。
 - **Q:`is_refusal` 有什么风险?** → 关键词误判:正常回答含"无法"(如"无法连接时…")会被误判拒答。且与 Prompt 话术强耦合。
 - **Q:为什么关键词提取要先抓"数字+单位"?** → 技术参数是说明书核心事实,整体提取防止"14天"被切碎成"14"和"天"丢失语义。
-- **Q:方案A准确率为空回答时怎么处理?** → 返回 0,且提前 return 避免除零。
-- **Q:方案A的局限是什么?** → ① 只看关键词重合,**不理解语义**(同义不同字算没依据);② 依赖关键词提取质量;③ 可能被"复读文档原词"刷高分(AI 照抄文档就能拿满分,但未必真正答对问题)。改进可引入语义相似度(embedding)做支撑判断。
+- **Q:有据可查率为空回答时怎么处理?** → 返回 0,且提前 return 避免除零。
+- **Q:有据可查率的局限是什么?** → ① 只看关键词重合,**不理解语义**(同义不同字算没依据);② 依赖关键词提取质量;③ 可能被"复读文档原词"刷高分(AI 照抄文档就能拿满分,但未必真正答对问题)。改进可引入语义相似度(embedding)做支撑判断。
 
 ---
 
@@ -765,9 +833,9 @@ def main():
             st.metric("问题分类", f"{category_color[result['category']]} {result['category']}")
         with col2:
             if result["accuracy"] is not None:
-                st.metric("方案A准确率", f"{result['accuracy']:.1%}")
+                st.metric("有据可查率", f"{result['accuracy']:.1%}")
             else:
-                st.metric("方案A准确率", "不适用")
+                st.metric("有据可查率", "不适用")
         with col3:
             st.metric("引用文档数", len(result["retrieved_docs"]))
 ```
@@ -799,7 +867,7 @@ def main():
                     st.warning(f"缺乏依据的词: {', '.join(detail['unsupported_keywords'][:10])}")
 ```
 - 只有有效问题(detail 非 None)才展示关键词详情。
-- 把方案A的中间结果可视化:总词数、有依据、无依据。
+- 把有据可查率的中间结果可视化:总词数、有依据、无依据。
 - `[:10]`:无依据的词最多显示 10 个,防刷屏。
 - **这是"可解释 AI"的落地**:不只给分数,还告诉你"哪些词没依据",让用户能判断这个准确率可不可信。
 
@@ -987,7 +1055,171 @@ def init_session_state():
 
 ---
 
-<!-- APPEND-BACKEND-4 -->
+## 附录 A:`src/telemetry.py` 埋点与自助解决率
+
+### A.1 为什么要埋点
+
+`groundedness` 这类技术指标回答不了一个问题:**这套系统到底有没有用**。
+业务方要的是"省了多少人力",所以必须把每一次问答记下来,最后算成一个业务指标。
+
+### A.2 存储结构
+
+单文件 SQLite(`data/telemetry.db`),一张 `events` 表:
+
+| 字段 | 含义 |
+|---|---|
+| `session_id` | 浏览器会话（UUID） |
+| `question` / `effective_question` | 原问题 / 补全设备后的实际问题 |
+| `answer` | 生成的回答 |
+| `category` | 有效 / 超纲 / 无效 |
+| `groundedness` | 有据可查率 |
+| `retrieved_count` | 召回条数 |
+| `latency_ms` | 端到端耗时 |
+| `retriever` / `device` | 用的哪个检索器、识别到哪个设备 |
+| `resolved` | 显式反馈：1 解决 / 0 未解决 / NULL 未表态 |
+| `feedback` | helpful / unhelpful |
+| `follow_up` | 是否被判定为"追问" |
+
+`ts` 和 `session_id` 建了索引，因为看板永远按时间和会话查。
+
+### A.3 三个核心动作
+
+**① 写一条提问**（`log_query`）
+插入之前先做一个判断：**同一个 session 内、10 分钟窗口内、上一条还没被标记解决的记录，标记为 `follow_up=1`**。
+
+> 这一步是整个埋点设计的关键。它把"用户没点反馈"这个信息缺口，用行为补上了——
+> 你接着问，说明上一条没解决。
+
+**② 记反馈**（`log_feedback`）
+用户点 👍/👎，更新目标记录的 `resolved` 和 `feedback`。
+
+**③ 算自助解决率**（`compute_resolution_rate`）
+
+```
+显式解决 = resolved == 1
+隐式解决 = resolved IS NULL AND follow_up == 0     ← 没表态，且之后没再问
+自助解决率 = (显式解决 + 隐式解决) / 总提问
+```
+
+同时返回：显式反馈条数、反馈覆盖率、追问数、平均有据可查率、拒答率。
+
+### A.4 这个指标的诚实之处
+
+- 隐式解决是**近似**，不是真值。用户可能没解决但也没再问（放弃了）。
+- 所以看板必须同时展示 **"显式反馈覆盖率"**——覆盖率低的时候，自助解决率的可信度就要打折扣。
+- 面试说法：**"这是一个有明确假设的近似指标，我把假设写在页面的折叠说明里，而不是藏起来。"**
+
+### A.5 面试考点
+
+- **Q:为什么用 SQLite 不用 MySQL?** → 单机部署、零运维、够用。数据量上来再换。
+- **Q:10 分钟窗口怎么定的?** → 经验值。太短会把"看完答案去试了一下再回来问"误判为追问；太长会把真的新问题算成追问。可配置。
+- **Q:埋点失败了怎么办?** → 全部 try/except 吞掉，只记到 `st.session_state.last_telemetry_error`。**埋点不能影响主流程。**
+- **Q:怎么防止刷数据?** → 目前没有。生产要加会话校验、频控、异常检测。
+
+---
+
+## 附录 B:`src/evaluation_runner.py` 可复现评测引擎
+
+### B.1 它解决什么问题
+
+页面上点一下跑评测，结果留在浏览器里——**不可复现、不可对比、不可回归**。
+这个模块把评测变成命令行可跑的、落盘留档的工程动作。
+
+### B.2 三件事
+
+**① 读测试集**（`load_test_set`）
+读 `evaluation/test_set.csv`，UTF-8 BOM，过滤空行和重复表头。
+
+**② 逐题评测**（`evaluate_one`）
+```
+检索 → 没召回就直接判超纲拒答（不调模型）
+     → 有召回则调模型 → 分类 → 判是否拒答
+     → 有效题才算有据可查率
+     → 有标准答案就算正确率
+     → 超纲题：拒答了就算正确
+```
+
+**注意一个设计**：`correct = recall ≥ 0.6`（关键词判分）或 LLM judge 的判定。
+两种口径可切换，因为**关键词判分便宜但死板，LLM judge 灵活但不稳定**，
+评测报告里必须写清楚用的哪种（写进 `meta.json`）。
+
+**③ 汇总落盘**（`summarize` + `save_results`）
+
+| 文件 | 内容 |
+|---|---|
+| `results.jsonl` | 逐题：问题、回答、召回数、两指标、耗时、错误 |
+| `results.csv` | 同上，表格版 |
+| `summary.json` | 汇总指标 |
+| `meta.json` | **模型、温度、检索器、top_k、判分方式、时间戳** |
+
+> `meta.json` 是这个模块最重要的产出。没有它，几个月后你看到一组数字，
+> 根本不知道当时跑的什么配置，也就没法解释"上次是 74% 这次怎么 60% 了"。
+
+### B.3 汇总里有哪些指标
+
+`total / valid / out_of_scope / invalid_or_error / errors /
+groundedness_avg / correctness_recall_avg / correct_rate /
+refusal_rate / task_success_rate`
+
+**`task_success_rate` 的定义**：（答对的有效题 + 正确拒答的超纲题）/ 总题数。
+这是唯一一个"把正面和负面题放在一起算"的指标，最接近业务视角。
+
+### B.4 面试考点
+
+- **Q:为什么评测要能命令行跑?** → 要进 CI、要能回归、要能对比不同配置。
+- **Q:关键词判分和 LLM judge 怎么选?** → 关键词判分快且确定，适合回归；LLM judge 适合评估语义，但同一份数据跑两次结果可能不同，不能做严格回归。
+- **Q:为什么记录 meta?** → 没有配置元数据的指标是不可比的。
+- **Q:样本 100 题够吗?** → 工程上够用，统计上不够。置信区间会很宽，不能用于对外承诺精度。
+
+---
+
+## 附录 C:`src/auth.py` 与 `src/admin_panel.py` 服务端
+
+### C.1 鉴权
+
+`require_login()`：单密码门。密码在 `config.ADMIN_PASSWORD`，登录后写
+`st.session_state.admin_authed`，页面顶部渲染退出按钮。
+
+**明确说清它不是什么**：不是用户体系、没有角色、没有哈希存储、没有会话过期。
+面试主动交代，并给生产方案（接 SSO / OAuth，角色权限，审计日志）。
+
+### C.2 服务端面板
+
+`pages/` 下三个页面都在登录后可用：
+
+| 页面 | 内容 |
+|---|---|
+| `实时评测.py` | 当前会话内的逐题有据可查率趋势（读 session_state，不落库） |
+| `一键评测.py` | 100 题批量评测，可选 judge（keyword/llm）、检索器（bm25/bigram/hybrid），调用 `evaluation_runner` |
+| `自助解决率.py` | 读 SQLite，展示自助解决率、提问量、反馈覆盖率、追问率、趋势、分类分布、高频未解决 TOP8、CSV 导出 |
+
+`src/admin_panel.py` 还提供**知识库管理**：按设备预览段落、追加新块、删除选中段，
+写回 txt 后 `st.cache_resource.clear()` 重建索引。
+
+> **这是"知识库运营"的雏形**：客户自己能维护内容，不用改代码、不用发版。
+> 对交付型岗位来说，这一点比模型效果更值钱。
+
+### C.3 面试考点
+
+- **Q:知识库改了为什么要清缓存?** → 检索器的索引是在 `@st.cache_resource` 里构建的，
+  不清缓存就一直用旧索引。
+- **Q:删除段落有什么风险?** → 索引重建是同步的，大文档会卡；而且没有版本回滚。
+  生产要加备份和灰度。
+- **Q:管理员改了文档，怎么证明没改坏?** → 改完重跑评测，对比 `summary.json`。
+  这就是评测集存在的第二个价值——**变更回归**。
+
+---
+
+## 附录 D:文档同步记录
+
+- **2026-10-26**：按当前代码同步本文件。主要修正：
+  - 检索层由 `simple_rag.py`（bigram + Jaccard）改为 `retrieval.py`（默认 BM25，可选向量与混合检索）；
+  - `top_k` 由 3 改为 5；
+  - 大模型由 MiniMax 改为 DeepSeek（`deepseek-chat`，temperature 0.3）；
+  - 指标名"方案A准确率"统一为"有据可查率（groundedness）"；
+  - 补充埋点、可复现评测、鉴权与服务端面板三个模块。
+
+
 
 
 
